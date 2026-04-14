@@ -1,0 +1,16 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: cash-cow-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: cashcow
+      POSTGRES_PASSWORD: cashcow
+      POSTGRES_DB: cash_cow
+    ports:
+      - "5432:5432"
+    volumes:
+      - cash_cow_data:/var/lib/postgresql/data
+
+volumes:
+  cash_cow_data:

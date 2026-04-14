@@ -1,0 +1,21 @@
+{
+  "name": "cash-cow",
+  "private": true,
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "build": "npm run build -w @cash-cow/database && npm run build -w @cash-cow/api",
+    "test:webhook": "dotenv -e .env -- node scripts/send-test-webhook.mjs",
+    "db:migrate": "dotenv -e .env -- npm run migrate -w @cash-cow/database",
+    "db:generate": "npm run generate -w @cash-cow/database",
+    "api:start": "npm run start -w @cash-cow/api",
+    "api:start:dev": "npm run start:dev -w @cash-cow/api",
+    "api:build": "npm run build -w @cash-cow/api"
+  },
+  "devDependencies": {
+    "dotenv-cli": "^7.4.2",
+    "typescript": "~5.3.0"
+  }
+}
