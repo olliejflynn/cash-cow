@@ -1,5 +1,14 @@
+function parsePort(): number {
+  const raw = process.env.PORT;
+  const n = parseInt(raw ?? "3000", 10);
+  if (!Number.isFinite(n) || n < 1 || n > 65535) {
+    return 3000;
+  }
+  return n;
+}
+
 export const config = () => ({
-  port: parseInt(process.env.PORT ?? "3000", 10),
+  port: parsePort(),
   webhookSecret: process.env.WEBHOOK_SECRET ?? "",
   databaseUrl: process.env.DATABASE_URL ?? "",
   googleServiceAccountPath: process.env.GOOGLE_SERVICE_ACCOUNT_PATH ?? "",
