@@ -79,15 +79,18 @@ WooCommerce-to-Google-Sheets webhook API. When a sale is made on WooCommerce, th
 - **API (prod build):**
 
   ```bash
-  npm run db:generate
-  npm run api:build
-  npm run api:start
+  npm run build
+  npm run api:start:prod
   ```
 
 The webhook endpoint is:
 
 - `POST /webhooks/woocommerce/order`  
-  Body: WooCommerce order JSON (same shape as WC REST API order). Each line item is appended as one row in the Sales_Log sheet. Duplicate events (same `order_id` + `order_key`) are skipped via PostgreSQL idempotency.
+  Body: WooCommerce order JSON (same shape as WC REST API order). The handler currently logs the parsed body to the console and returns `{ ok: true }`.
+
+## Deploy (Railway)
+
+Use **npm** only (`package-lock.json`). A stray **`pnpm-lock.yaml` without `pnpm-workspace.yaml`** makes Railpack use pnpm but skip npm workspaces, so dependencies like `@nestjs/cli` never install and the build fails with **`nest: not found`**. [`railpack.json`](railpack.json) runs root **`npm run build`** (Prisma client generate, `@cash-cow/database` compile, then Nest API) and starts with **`npm run start:prod -w @cash-cow/api`** (`node dist/main.js`).
 
 ## Local testing (without WooCommerce)
 
