@@ -103,6 +103,14 @@ This sends `request_body_example.json` to `http://localhost:3000/webhooks/woocom
 - **Custom body file:** `WEBHOOK_BODY_PATH=./my-order.json npm run test:webhook`
 - **Signed request:** set `WEBHOOK_SECRET` in the environment (same value as in `.env`) to send `X-WC-Webhook-Signature` so you can test signature verification.
 
+To verify Google Sheets credentials and append a single test row (same API as production):
+
+```bash
+npm run test:sheets
+```
+
+Requires `SPREADSHEET_ID`, `SALES_LOG_SHEET_NAME` (optional), and `GOOGLE_SERVICE_ACCOUNT_PATH` or `GOOGLE_SERVICE_ACCOUNT_JSON` in `.env`. Do not put multiline JSON in `.env` (use a key file path locally, or one-line JSON on Railway).
+
 ## MVP behaviour
 
 - One endpoint; no Ticket_Rules, Seller_Overrides, Seller_Map, or WC_Catalogue in the DB.

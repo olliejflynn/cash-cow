@@ -35,16 +35,17 @@ export class SheetsService {
   private async getSheetsClient(): Promise<sheets_v4.Sheets> {
     if (this.sheets) return this.sheets;
 
-    const jsonPath = this.config.get<string>("googleServiceAccountPath");
-    const jsonStr = this.config.get<string>("googleServiceAccountJson");
+    const jsonPath = this.config.get<string>("googleServiceAccountPath")?.trim();
+    const jsonStr = this.config.get<string>("googleServiceAccountJson")?.trim();
 
     let credentials: object;
-    if (jsonStr) {
-      credentials = JSON.parse(jsonStr) as object;
-    } else if (jsonPath) {
+    // Prefer file path: multiline JSON in .env often breaks dotenv; PATH is reliable locally.
+    if (jsonPath) {
       const fs = await import("fs/promises");
       const raw = await fs.readFile(jsonPath, "utf-8");
       credentials = JSON.parse(raw) as object;
+    } else if (jsonStr) {
+      credentials = JSON.parse(jsonStr) as object;
     } else {
       throw new Error(
         "Set GOOGLE_SERVICE_ACCOUNT_PATH or GOOGLE_SERVICE_ACCOUNT_JSON"

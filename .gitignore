@@ -5,3 +5,6 @@ dist
 .DS_Store
 .env.local
 .env.*.local
+
+# Google Cloud service account key downloads (never commit; use GOOGLE_SERVICE_ACCOUNT_PATH locally)
+cash-cow-*-*.json
