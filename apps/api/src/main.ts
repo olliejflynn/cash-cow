@@ -18,7 +18,8 @@ async function bootstrap() {
   app.use(urlencoded({ extended: true }));
   const config = app.get(ConfigService);
   const port = config.get<number>("port") ?? 3000;
-  await app.listen(port);
+  // Bind all interfaces (required on Railway/Docker so the edge proxy can reach the process).
+  await app.listen(port, "0.0.0.0");
 }
 
 bootstrap();

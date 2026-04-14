@@ -90,7 +90,7 @@ The webhook endpoint is:
 
 ## Deploy (Railway)
 
-Use **npm** only (`package-lock.json`). A stray **`pnpm-lock.yaml` without `pnpm-workspace.yaml`** makes Railpack use pnpm but skip npm workspaces, so dependencies like `@nestjs/cli` never install and the build fails with **`nest: not found`**. [`railpack.json`](railpack.json) runs root **`npm run build`** (Prisma client generate, `@cash-cow/database` compile, then Nest API) and starts with **`npm run start:prod -w @cash-cow/api`** (`node dist/main.js`).
+Use **npm** only (`package-lock.json`). A stray **`pnpm-lock.yaml` without `pnpm-workspace.yaml`** makes Railpack use pnpm but skip npm workspaces, so dependencies like `@nestjs/cli` never install and the build fails with **`nest: not found`**. [`railpack.json`](railpack.json) runs root **`npm run build`** (Prisma client generate, `@cash-cow/database` compile, then Nest API) and starts with **`npm run start -w @cash-cow/api`**, which runs **`node dist/main.js`** (not `nest start`, so the container listens immediately after boot).
 
 ## Local testing (without WooCommerce)
 

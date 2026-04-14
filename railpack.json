@@ -6,6 +6,6 @@
     }
   },
   "deploy": {
-    "startCommand": "npm run start:prod -w @cash-cow/api"
+    "startCommand": "npm run start -w @cash-cow/api"
   }
 }
