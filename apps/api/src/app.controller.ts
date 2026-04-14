@@ -18,6 +18,7 @@ export class AppController {
   }
 
   @Post()
+  @HttpCode(200)
   rootPost(): { ok: boolean } {
     return { ok: true };
   }
