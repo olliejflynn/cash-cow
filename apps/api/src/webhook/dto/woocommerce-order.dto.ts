@@ -32,5 +32,9 @@ export class WooCommerceOrderDto {
   order_key?: string;
   line_items: WooCommerceLineItemDto[];
   coupon_lines: WooCommerceCouponLineDto[];
+  meta_data?: Array<{
+    key?: string;
+    value?: unknown;
+  }>;
   total?: string;
 }
