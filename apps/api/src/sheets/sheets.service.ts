@@ -2,6 +2,7 @@ import { Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { google, sheets_v4 } from "googleapis";
 import type { SalesLogRow } from "../webhook/sales-log.types";
+import type { SquarePaymentRow } from "../webhook/square-payment.types";
 
 const SALES_LOG_COLUMNS: (keyof SalesLogRow)[] = [
   "logged_at",
@@ -19,17 +20,27 @@ const SALES_LOG_COLUMNS: (keyof SalesLogRow)[] = [
   "hand_in_amount",
   "notes",
 ];
+const SQUARE_PAYMENT_COLUMNS: (keyof SquarePaymentRow)[] = [
+  "payment_id",
+  "payment_time",
+  "team_member",
+  "amount_cents",
+  "status",
+];
 
 @Injectable()
 export class SheetsService {
   private sheets: sheets_v4.Sheets | null = null;
   private spreadsheetId: string = "";
-  private sheetName: string = "Sales_Log";
+  private salesLogSheetName: string = "Sales_Log";
+  private squarePaymentsSheetName: string = "Square_payments";
 
   constructor(private readonly config: ConfigService) {
     this.spreadsheetId = this.config.get<string>("spreadsheetId") ?? "";
-    this.sheetName =
+    this.salesLogSheetName =
       this.config.get<string>("salesLogSheetName") ?? "Sales_Log";
+    this.squarePaymentsSheetName =
+      this.config.get<string>("squarePaymentsSheetName") ?? "Square_payments";
   }
 
   private async getSheetsClient(): Promise<sheets_v4.Sheets> {
@@ -74,10 +85,48 @@ export class SheetsService {
 
     await client.spreadsheets.values.append({
       spreadsheetId: this.spreadsheetId,
-      range: `${this.sheetName}!A:Z`,
+      range: `${this.salesLogSheetName}!A:Z`,
       valueInputOption: "USER_ENTERED",
       insertDataOption: "INSERT_ROWS",
       requestBody: { values },
+    });
+  }
+
+  /**
+   * Append Square payment rows to the configured spreadsheet tab.
+   * Column order: Payment ID, Payment Time, Team Member, Amount (cents), Status.
+   */
+  async appendSquarePaymentRows(rows: SquarePaymentRow[]): Promise<void> {
+    if (rows.length === 0) return;
+
+    const client = await this.getSheetsClient();
+    const values = rows.map((row) =>
+      SQUARE_PAYMENT_COLUMNS.map((key) => row[key] ?? "")
+    );
+
+    await client.spreadsheets.values.append({
+      spreadsheetId: this.spreadsheetId,
+      range: `${this.squarePaymentsSheetName}!A:E`,
+      valueInputOption: "USER_ENTERED",
+      insertDataOption: "INSERT_ROWS",
+      requestBody: { values },
+    });
+  }
+
+  async squarePaymentIdExists(paymentId: string): Promise<boolean> {
+    const normalizedPaymentId = paymentId.trim();
+    if (normalizedPaymentId === "") return false;
+
+    const client = await this.getSheetsClient();
+    const response = await client.spreadsheets.values.get({
+      spreadsheetId: this.spreadsheetId,
+      range: `${this.squarePaymentsSheetName}!A:A`,
+    });
+
+    const values = response.data.values ?? [];
+    return values.some((row) => {
+      const cell = Array.isArray(row) ? row[0] : undefined;
+      return typeof cell === "string" && cell.trim() === normalizedPaymentId;
     });
   }
 }

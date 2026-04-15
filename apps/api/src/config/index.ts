@@ -15,6 +15,8 @@ export const config = () => ({
   googleServiceAccountJson: process.env.GOOGLE_SERVICE_ACCOUNT_JSON,
   spreadsheetId: process.env.SPREADSHEET_ID ?? "",
   salesLogSheetName: process.env.SALES_LOG_SHEET_NAME ?? "Sales_Log",
+  squarePaymentsSheetName:
+    process.env.SQUARE_PAYMENTS_SHEET_NAME ?? "Square_payments",
   defaultHandInPercent: parseFloat(
     process.env.DEFAULT_HAND_IN_PERCENT ?? "100"
   ),
