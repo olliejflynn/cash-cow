@@ -1,6 +1,8 @@
 import type { WooCommerceOrderDto } from "./dto/woocommerce-order.dto";
 import type { SalesLogRow } from "./sales-log.types";
 
+const COMMISSION_PER_TICKET = 10;
+
 export interface OrderToSalesLogOptions {
   webhookEventId: string;
   defaultSellerCode: string;
@@ -24,6 +26,7 @@ export function orderToSalesLogRows(
     const isDeposit = isDeposit20(item);
     const unitPricePaid = isDeposit ? 20 : getPaidInFullUnitPrice(item, qty);
     const grossAmount = unitPricePaid * qty;
+    const handInAmount = grossAmount - qty * COMMISSION_PER_TICKET;
     const ticketType = getTicketType(item);
     const categoryCompany = getCategoryCompany(item);
 
@@ -40,7 +43,7 @@ export function orderToSalesLogRows(
       gross_amount: String(grossAmount),
       seller_code: sellerCode,
       "Category (Company)": categoryCompany,
-      hand_in_amount: "",
+      hand_in_amount: String(handInAmount),
       notes: "",
     };
   });

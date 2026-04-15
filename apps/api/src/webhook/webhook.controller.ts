@@ -1,4 +1,6 @@
 import { Controller, Post, Body, HttpCode, UseGuards } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
+import { SheetsService } from "../sheets/sheets.service";
 import { WebhookSecretGuard } from "./webhook-secret.guard";
 import { orderToSalesLogRows } from "./order-to-sales-log";
 import type { WooCommerceOrderDto } from "./dto/woocommerce-order.dto";
@@ -6,9 +8,14 @@ import type { WooCommerceOrderDto } from "./dto/woocommerce-order.dto";
 @Controller("webhooks/woocommerce")
 @UseGuards(WebhookSecretGuard)
 export class WebhookController {
+  constructor(
+    private readonly sheetsService: SheetsService,
+    private readonly configService: ConfigService
+  ) {}
+
   @Post("order")
   @HttpCode(200)
-  handleOrder(@Body() body: unknown): { ok: boolean } {
+  async handleOrder(@Body() body: unknown): Promise<{ ok: boolean }> {
     const payload = isObject(body) ? body : null;
 
     if (isWooCommerceTestPing(payload)) {
@@ -35,6 +42,12 @@ export class WebhookController {
         ? `${order.id}:${order.order_key}`
         : `${order.id}:${order.date_created ?? Date.now()}`;
 
+    const salesRows = orderToSalesLogRows(order, {
+      webhookEventId,
+      defaultSellerCode:
+        this.configService.get<string>("defaultSellerCode") ?? "UNKNOWN",
+    });
+
     const extracted = {
       order: {
         order_id: order.id,
@@ -48,13 +61,11 @@ export class WebhookController {
         loc,
         card,
       },
-      sales_rows: orderToSalesLogRows(order, {
-        webhookEventId,
-        defaultSellerCode: "UNKNOWN",
-      }),
+      sales_rows: salesRows,
     };
 
     console.log(JSON.stringify(extracted, null, 2));
+    await this.sheetsService.appendSalesLogRows(salesRows);
     return { ok: true };
   }
 }
