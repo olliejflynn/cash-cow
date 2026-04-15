@@ -19,23 +19,10 @@ export class WebhookController {
     const payload = isObject(body) ? body : null;
 
     if (isWooCommerceTestPing(payload)) {
-      console.log(
-        JSON.stringify(
-          {
-            event: "woocommerce_test_ping",
-            webhook_id: payload.webhook_id,
-          },
-          null,
-          2
-        )
-      );
       return { ok: true };
     }
 
     const order = toWooOrder(payload);
-    const place = getOrderMetaValue(order, "place");
-    const loc = getOrderMetaValue(order, "loc");
-    const card = getOrderMetaValue(order, "card");
 
     const webhookEventId =
       order.order_key != null && String(order.order_key).trim() !== ""
@@ -48,23 +35,6 @@ export class WebhookController {
         this.configService.get<string>("defaultSellerCode") ?? "UNKNOWN",
     });
 
-    const extracted = {
-      order: {
-        order_id: order.id,
-        order_status: order.status ?? "",
-        order_created_at: order.date_created ?? "",
-        customer_id: order.customer_id ?? "",
-        order_key: order.order_key ?? "",
-      },
-      metadata: {
-        place,
-        loc,
-        card,
-      },
-      sales_rows: salesRows,
-    };
-
-    console.log(JSON.stringify(extracted, null, 2));
     await this.sheetsService.appendSalesLogRows(salesRows);
     return { ok: true };
   }
@@ -113,11 +83,3 @@ function toWooOrder(payload: Record<string, unknown> | null): WooCommerceOrderDt
   };
 }
 
-function getOrderMetaValue(order: WooCommerceOrderDto, key: string): string {
-  const meta = Array.isArray(order.meta_data) ? order.meta_data : [];
-  const found = meta.find(
-    (m) => m && typeof m === "object" && m.key === key
-  ) as { value?: unknown } | undefined;
-  if (!found || found.value == null) return "";
-  return String(found.value);
-}
