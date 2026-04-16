@@ -34,6 +34,7 @@ export class SheetsService {
   private spreadsheetId: string = "";
   private salesLogSheetName: string = "Sales_Log";
   private squarePaymentsSheetName: string = "Square_payments";
+  private sellersSheetName: string = "Sellers";
 
   constructor(private readonly config: ConfigService) {
     this.spreadsheetId = this.config.get<string>("spreadsheetId") ?? "";
@@ -41,6 +42,7 @@ export class SheetsService {
       this.config.get<string>("salesLogSheetName") ?? "Sales_Log";
     this.squarePaymentsSheetName =
       this.config.get<string>("squarePaymentsSheetName") ?? "Square_payments";
+    this.sellersSheetName = "Sellers";
   }
 
   private async getSheetsClient(): Promise<sheets_v4.Sheets> {
@@ -129,4 +131,76 @@ export class SheetsService {
       return typeof cell === "string" && cell.trim() === normalizedTeamMemberId;
     });
   }
+
+  /**
+   * For Sellers tab, set Square_team_ID using matching email values.
+   * Rows with blank email are ignored.
+   */
+  async setSellerSquareTeamIdsByEmail(
+    teamIdByEmail: Map<string, string>
+  ): Promise<number> {
+    if (teamIdByEmail.size === 0) return 0;
+
+    const client = await this.getSheetsClient();
+    const response = await client.spreadsheets.values.get({
+      spreadsheetId: this.spreadsheetId,
+      range: `${this.sellersSheetName}!A:Z`,
+    });
+    const values = response.data.values ?? [];
+    if (values.length === 0) return 0;
+
+    const header = values[0]?.map((v) => String(v).trim()) ?? [];
+    const emailIdx = header.findIndex((v) => v.toLowerCase() === "email");
+    const teamIdIdx = header.findIndex(
+      (v) => v.toLowerCase() === "square_team_id"
+    );
+    if (emailIdx < 0 || teamIdIdx < 0) {
+      throw new Error(
+        `Sellers tab is missing required headers 'email' or 'Square_team_ID'`
+      );
+    }
+
+    const updates: sheets_v4.Schema$ValueRange[] = [];
+    for (let i = 1; i < values.length; i++) {
+      const row = values[i] ?? [];
+      const email = String(row[emailIdx] ?? "").trim().toLowerCase();
+      if (email === "") continue;
+
+      const teamId = teamIdByEmail.get(email);
+      if (!teamId) continue;
+
+      const current = String(row[teamIdIdx] ?? "").trim();
+      if (current === teamId) continue;
+
+      const rowNumber = i + 1;
+      const col = toA1Column(teamIdIdx + 1);
+      updates.push({
+        range: `${this.sellersSheetName}!${col}${rowNumber}`,
+        values: [[teamId]],
+      });
+    }
+
+    if (updates.length === 0) return 0;
+
+    await client.spreadsheets.values.batchUpdate({
+      spreadsheetId: this.spreadsheetId,
+      requestBody: {
+        valueInputOption: "RAW",
+        data: updates,
+      },
+    });
+
+    return updates.length;
+  }
+}
+
+function toA1Column(index1Based: number): string {
+  let index = index1Based;
+  let label = "";
+  while (index > 0) {
+    const r = (index - 1) % 26;
+    label = String.fromCharCode(65 + r) + label;
+    index = Math.floor((index - 1) / 26);
+  }
+  return label;
 }

@@ -1,8 +1,12 @@
 import { Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import { upsertSquareOAuthCredential } from "@cash-cow/database";
+import {
+  getLatestSquareOAuthCredential,
+  upsertSquareOAuthCredential,
+} from "@cash-cow/database";
+import { SheetsService } from "../sheets/sheets.service";
 import { createSignedOAuthState, verifySignedOAuthState } from "./oauth-state";
-import { encryptTokenPayload } from "./token-crypto";
+import { decryptTokenPayload, encryptTokenPayload } from "./token-crypto";
 
 type SquareEnvironment = "sandbox" | "production";
 
@@ -15,9 +19,22 @@ interface ObtainTokenResponse {
   errors?: Array<{ category?: string; code?: string; detail?: string }>;
 }
 
+interface TeamMember {
+  id?: string;
+  email_address?: string;
+}
+
+interface ListTeamMembersResponse {
+  team_members?: TeamMember[];
+  cursor?: string;
+}
+
 @Injectable()
 export class SquareOAuthService {
-  constructor(private readonly config: ConfigService) {}
+  constructor(
+    private readonly config: ConfigService,
+    private readonly sheetsService: SheetsService
+  ) {}
 
   private getEnvironment(): SquareEnvironment {
     const raw = (this.config.get<string>("squareEnvironment") ?? "sandbox").toLowerCase();
@@ -29,6 +46,38 @@ export class SquareOAuthService {
     return this.getEnvironment() === "production"
       ? "https://connect.squareup.com"
       : "https://connect.squareupsandbox.com";
+  }
+
+  private async getStoredAccessToken(): Promise<string> {
+    const cfg = this.requireOAuthConfig();
+    const latest = await getLatestSquareOAuthCredential(this.getEnvironment());
+    if (!latest) {
+      throw new Error(
+        "No stored Square OAuth credential found. Complete OAuth connect first."
+      );
+    }
+    const payloadText = decryptTokenPayload(
+      cfg.encryptionKey,
+      latest.tokenCiphertext
+    );
+    let payload: unknown;
+    try {
+      payload = JSON.parse(payloadText);
+    } catch {
+      throw new Error("Stored Square token payload is invalid JSON");
+    }
+    const accessToken =
+      payload &&
+      typeof payload === "object" &&
+      "access_token" in payload &&
+      typeof (payload as { access_token?: unknown }).access_token === "string"
+        ? (payload as { access_token: string }).access_token.trim()
+        : "";
+
+    if (accessToken === "") {
+      throw new Error("Stored Square token payload does not include access_token");
+    }
+    return accessToken;
   }
 
   private requireOAuthConfig(): {
@@ -133,5 +182,57 @@ export class SquareOAuthService {
     });
 
     return { merchantId };
+  }
+
+  async syncSellerSquareTeamIds(): Promise<{
+    fetchedTeamMembers: number;
+    mappedByEmail: number;
+    updatedSellers: number;
+  }> {
+    const accessToken = await this.getStoredAccessToken();
+    const teamIdByEmail = new Map<string, string>();
+    let fetchedTeamMembers = 0;
+    let cursor: string | undefined;
+
+    do {
+      const url = new URL("/v2/team-members", this.connectBaseUrl());
+      if (cursor) url.searchParams.set("cursor", cursor);
+
+      const response = await fetch(url.toString(), {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Square-Version": "2024-10-17",
+        },
+      });
+
+      const body = (await response.json()) as ListTeamMembersResponse & {
+        errors?: Array<{ detail?: string; code?: string }>;
+      };
+      if (!response.ok) {
+        const detail =
+          body.errors?.map((e) => e.detail ?? e.code ?? "").filter(Boolean).join("; ") ||
+          `Square team member fetch failed (${response.status})`;
+        throw new Error(detail);
+      }
+
+      const members = body.team_members ?? [];
+      fetchedTeamMembers += members.length;
+      for (const member of members) {
+        const email = (member.email_address ?? "").trim().toLowerCase();
+        const id = (member.id ?? "").trim();
+        if (email === "" || id === "") continue;
+        teamIdByEmail.set(email, id);
+      }
+      cursor = body.cursor;
+    } while (cursor);
+
+    const updatedSellers =
+      await this.sheetsService.setSellerSquareTeamIdsByEmail(teamIdByEmail);
+    return {
+      fetchedTeamMembers,
+      mappedByEmail: teamIdByEmail.size,
+      updatedSellers,
+    };
   }
 }

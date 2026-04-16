@@ -3,6 +3,7 @@ import {
   Controller,
   Get,
   Headers,
+  Post,
   Query,
   Res,
   UnauthorizedException,
@@ -63,6 +64,28 @@ export class SquareOAuthController {
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : "Token exchange failed";
       res.status(400).type("html").send(htmlPage("Could not complete Square OAuth", escapeHtml(message)));
+    }
+  }
+
+  @Post("sync-sellers-team-ids")
+  async syncSellersTeamIds(
+    @Headers("authorization") authorization?: string
+  ): Promise<{
+    ok: boolean;
+    fetchedTeamMembers: number;
+    mappedByEmail: number;
+    updatedSellers: number;
+  }> {
+    this.assertSetupAuthorized(authorization);
+    try {
+      const result = await this.squareOAuth.syncSellerSquareTeamIds();
+      return {
+        ok: true,
+        ...result,
+      };
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : "Failed to sync seller team IDs";
+      throw new BadRequestException(message);
     }
   }
 
