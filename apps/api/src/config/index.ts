@@ -21,4 +21,11 @@ export const config = () => ({
     process.env.DEFAULT_HAND_IN_PERCENT ?? "100"
   ),
   defaultSellerCode: process.env.DEFAULT_SELLER_CODE ?? "UNKNOWN",
+  squareApplicationId: process.env.SQUARE_APPLICATION_ID ?? "",
+  squareApplicationSecret: process.env.SQUARE_APPLICATION_SECRET ?? "",
+  squareRedirectUri: process.env.SQUARE_REDIRECT_URI ?? "",
+  squareEnvironment: (process.env.SQUARE_ENVIRONMENT ?? "sandbox").toLowerCase(),
+  squareOAuthScopes: process.env.SQUARE_OAUTH_SCOPES ?? "",
+  squareTokenEncryptionKey: process.env.SQUARE_TOKEN_ENCRYPTION_KEY ?? "",
+  squareOAuthSetupSecret: process.env.SQUARE_OAUTH_SETUP_SECRET ?? "",
 });

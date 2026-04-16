@@ -103,14 +103,41 @@ export class SheetsService {
     const values = rows.map((row) =>
       SQUARE_PAYMENT_COLUMNS.map((key) => row[key] ?? "")
     );
+    console.log(
+      JSON.stringify(
+        {
+          event: "square_sheet_append_attempt",
+          received_at: new Date().toISOString(),
+          spreadsheet_id: this.spreadsheetId,
+          sheet_name: this.squarePaymentsSheetName,
+          row_count: rows.length,
+          first_row: rows[0],
+        },
+        null,
+        2
+      )
+    );
 
-    await client.spreadsheets.values.append({
+    const response = await client.spreadsheets.values.append({
       spreadsheetId: this.spreadsheetId,
       range: `${this.squarePaymentsSheetName}!A:E`,
       valueInputOption: "USER_ENTERED",
       insertDataOption: "INSERT_ROWS",
       requestBody: { values },
     });
+    console.log(
+      JSON.stringify(
+        {
+          event: "square_sheet_append_success",
+          received_at: new Date().toISOString(),
+          updated_range: response.data.updates?.updatedRange ?? "",
+          updated_rows: response.data.updates?.updatedRows ?? 0,
+          updated_cells: response.data.updates?.updatedCells ?? 0,
+        },
+        null,
+        2
+      )
+    );
   }
 
   async squarePaymentIdExists(paymentId: string): Promise<boolean> {
@@ -124,9 +151,25 @@ export class SheetsService {
     });
 
     const values = response.data.values ?? [];
-    return values.some((row) => {
+    const exists = values.some((row) => {
       const cell = Array.isArray(row) ? row[0] : undefined;
       return typeof cell === "string" && cell.trim() === normalizedPaymentId;
     });
+    console.log(
+      JSON.stringify(
+        {
+          event: "square_sheet_duplicate_lookup",
+          received_at: new Date().toISOString(),
+          spreadsheet_id: this.spreadsheetId,
+          sheet_name: this.squarePaymentsSheetName,
+          payment_id: normalizedPaymentId,
+          sheet_row_count_in_column_a: values.length,
+          exists,
+        },
+        null,
+        2
+      )
+    );
+    return exists;
   }
 }

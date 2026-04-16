@@ -16,3 +16,16 @@ model WebhookEvent {
 
   @@map("webhook_events")
 }
+
+model SquareOAuthCredential {
+  id              String    @id @default(uuid())
+  environment     String
+  merchantId      String    @map("merchant_id")
+  tokenCiphertext String    @map("token_ciphertext")
+  expiresAt       DateTime? @map("expires_at")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  @@unique([merchantId, environment])
+  @@map("square_oauth_credentials")
+}
