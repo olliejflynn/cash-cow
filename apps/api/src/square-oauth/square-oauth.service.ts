@@ -197,6 +197,21 @@ export class SquareOAuthService {
     do {
       const url = new URL("/v2/team-members/search", this.connectBaseUrl());
 
+      // SearchTeamMembers body: `query` is SearchTeamMembersQuery (filters only).
+      // `limit` and `cursor` are top-level fields on the request, not inside `query`.
+      // See: https://developer.squareup.com/reference/square/objects/SearchTeamMembersQuery
+      // and https://developer.squareup.com/docs/team/integration#list-or-search-for-team-members
+      const pageSize = 25;
+      const requestBody: Record<string, unknown> = {
+        query: {
+          filter: {},
+        },
+        limit: pageSize,
+      };
+      if (cursor) {
+        requestBody.cursor = cursor;
+      }
+
       const response = await fetch(url.toString(), {
         method: "POST",
         headers: {
@@ -204,12 +219,7 @@ export class SquareOAuthService {
           "Square-Version": "2024-10-17",
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          query: {
-            limit: 200,
-            cursor,
-          },
-        }),
+        body: JSON.stringify(requestBody),
       });
 
       const body = (await response.json()) as ListTeamMembersResponse & {
