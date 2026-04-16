@@ -23,18 +23,10 @@ export class SquareWebhookController {
         getStringField(payment, "created_at") ??
         "",
       team_member: getStringField(payment, "team_member_id") ?? "",
+      seller_id: "",
       amount_cents: amount == null ? "" : String(amount),
       status,
     };
-    // Keep runtime logs concise: only emit the four extracted values.
-    console.log(
-      JSON.stringify({
-        payment_id: row.payment_id,
-        team_member: row.team_member,
-        amount_cents: row.amount_cents,
-        status: row.status,
-      })
-    );
 
     if (status.toUpperCase() !== "COMPLETED") {
       return { ok: true };
@@ -44,11 +36,29 @@ export class SquareWebhookController {
       return { ok: true };
     }
 
-    const teamMemberAlreadyExists =
-      await this.sheetsService.squarePaymentTeamMemberExists(row.team_member);
-    if (teamMemberAlreadyExists) {
+    const alreadyInSheet = await this.sheetsService.squarePaymentIdExists(paymentId);
+    if (alreadyInSheet) {
       return { ok: true };
     }
+
+    const sellerId = await this.sheetsService.getSellerIdBySquareTeamMemberId(
+      row.team_member
+    );
+    if (sellerId == null) {
+      return { ok: true };
+    }
+
+    row.seller_id = sellerId;
+
+    console.log(
+      JSON.stringify({
+        payment_id: row.payment_id,
+        team_member: row.team_member,
+        seller_id: row.seller_id,
+        amount_cents: row.amount_cents,
+        status: row.status,
+      })
+    );
 
     await this.sheetsService.appendSquarePaymentRows([row]);
 

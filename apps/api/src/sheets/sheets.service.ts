@@ -20,10 +20,12 @@ const SALES_LOG_COLUMNS: (keyof SalesLogRow)[] = [
   "hand_in_amount",
   "notes",
 ];
+/** Matches sheet headers: Payment ID, Payment Time, Team Member, Seller ID, Amount (cents), Status */
 const SQUARE_PAYMENT_COLUMNS: (keyof SquarePaymentRow)[] = [
   "payment_id",
   "payment_time",
   "team_member",
+  "seller_id",
   "amount_cents",
   "status",
 ];
@@ -96,7 +98,7 @@ export class SheetsService {
 
   /**
    * Append Square payment rows to the configured spreadsheet tab.
-   * Column order: Payment ID, Payment Time, Team Member, Amount (cents), Status.
+   * Column order: Payment ID, Payment Time, Team Member, Seller ID, Amount (cents), Status.
    */
   async appendSquarePaymentRows(rows: SquarePaymentRow[]): Promise<void> {
     if (rows.length === 0) return;
@@ -108,28 +110,66 @@ export class SheetsService {
 
     await client.spreadsheets.values.append({
       spreadsheetId: this.spreadsheetId,
-      range: `${this.squarePaymentsSheetName}!A:E`,
+      range: `${this.squarePaymentsSheetName}!A:F`,
       valueInputOption: "USER_ENTERED",
       insertDataOption: "INSERT_ROWS",
       requestBody: { values },
     });
   }
 
-  async squarePaymentTeamMemberExists(teamMemberId: string): Promise<boolean> {
-    const normalizedTeamMemberId = teamMemberId.trim();
-    if (normalizedTeamMemberId === "") return false;
+  async squarePaymentIdExists(paymentId: string): Promise<boolean> {
+    const normalized = paymentId.trim();
+    if (normalized === "") return false;
 
     const client = await this.getSheetsClient();
     const response = await client.spreadsheets.values.get({
       spreadsheetId: this.spreadsheetId,
-      range: `${this.squarePaymentsSheetName}!C:C`,
+      range: `${this.squarePaymentsSheetName}!A:A`,
     });
 
     const values = response.data.values ?? [];
     return values.some((row) => {
       const cell = Array.isArray(row) ? row[0] : undefined;
-      return typeof cell === "string" && cell.trim() === normalizedTeamMemberId;
+      return typeof cell === "string" && cell.trim() === normalized;
     });
+  }
+
+  /**
+   * Sellers tab: match `Square_team_ID` to Square payment `team_member_id`,
+   * return the business `seller_id` column value for the payment row (not Square catalog IDs).
+   */
+  async getSellerIdBySquareTeamMemberId(
+    teamMemberId: string
+  ): Promise<string | null> {
+    const normalizedTeam = teamMemberId.trim();
+    if (normalizedTeam === "") return null;
+
+    const client = await this.getSheetsClient();
+    const response = await client.spreadsheets.values.get({
+      spreadsheetId: this.spreadsheetId,
+      range: `${this.sellersSheetName}!A:Z`,
+    });
+    const values = response.data.values ?? [];
+    if (values.length === 0) return null;
+
+    const header = values[0]?.map((v) => String(v).trim()) ?? [];
+    const normHeader = (h: string) => h.toLowerCase().replace(/\s+/g, "_");
+    const teamIdx = header.findIndex((h) => normHeader(h) === "square_team_id");
+    const sellerIdx = header.findIndex((h) => normHeader(h) === "seller_id");
+    if (teamIdx < 0 || sellerIdx < 0) {
+      throw new Error(
+        `Sellers tab must include 'Square_team_ID' and 'seller_id' headers`
+      );
+    }
+
+    for (let i = 1; i < values.length; i++) {
+      const row = values[i] ?? [];
+      const teamCell = String(row[teamIdx] ?? "").trim();
+      if (teamCell !== normalizedTeam) continue;
+      const sellerId = String(row[sellerIdx] ?? "").trim();
+      return sellerId === "" ? null : sellerId;
+    }
+    return null;
   }
 
   /**
