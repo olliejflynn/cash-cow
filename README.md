@@ -90,7 +90,9 @@ The webhook endpoint is:
 
 ## Deploy (Railway)
 
-Use **npm** only (`package-lock.json`). A stray **`pnpm-lock.yaml` without `pnpm-workspace.yaml`** makes Railpack use pnpm but skip npm workspaces, so dependencies like `@nestjs/cli` never install and the build fails with **`nest: not found`**. [`railpack.json`](railpack.json) runs root **`npm run build`** (Prisma client generate, `@cash-cow/database` compile, then Nest API) and starts with **`npm run start -w @cash-cow/api`**, which runs **`node dist/main.js`** (not `nest start`, so the container listens immediately after boot).
+Use **npm** only (`package-lock.json`). A stray **`pnpm-lock.yaml` without `pnpm-workspace.yaml`** makes Railpack use pnpm but skip npm workspaces, so dependencies like `@nestjs/cli` never install and the build fails with **`nest: not found`**. [`railpack.json`](railpack.json) runs root **`npm run build`** (includes `npm run db:migrate`, Prisma client generate, `@cash-cow/database` compile, then Nest API) and starts with **`npm run db:migrate && npm run start -w @cash-cow/api`**, which runs **`node dist/main.js`** (not `nest start`, so the container listens immediately after boot).
+
+For Railway, set a valid **`DATABASE_URL`** in the API service Variables. Prisma commands now auto-use `.env` when present (local) and fall back to process env (Railway), so the same scripts work in both environments.
 
 **`PORT`:** Do not define **`PORT`** yourself in Railway unless you know you need to. Railway injects **`PORT`** automatically; the app must listen on that value. A manual **`PORT=3000`** often causes **502** if the proxy targets a different internal port. Check deploy logs for the `[bootstrap] Listening on…` line.
 

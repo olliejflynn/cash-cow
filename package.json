@@ -6,10 +6,10 @@
     "apps/*"
   ],
   "scripts": {
-    "build": "npm run generate -w @cash-cow/database && npm run build -w @cash-cow/database && npm run build -w @cash-cow/api",
+    "build": "npm run db:migrate && npm run generate -w @cash-cow/database && npm run build -w @cash-cow/database && npm run build -w @cash-cow/api",
     "test:webhook": "dotenv -e .env -- node scripts/send-test-webhook.mjs",
     "test:sheets": "dotenv -e .env -- node scripts/test-sheets-append.mjs",
-    "db:migrate": "dotenv -e .env -- npm run migrate -w @cash-cow/database",
+    "db:migrate": "sh -c 'if [ -f .env ]; then dotenv -e .env -- npm run migrate -w @cash-cow/database; else npm run migrate -w @cash-cow/database; fi'",
     "db:generate": "npm run generate -w @cash-cow/database",
     "api:start": "npm run start -w @cash-cow/api",
     "api:start:prod": "npm run start:prod -w @cash-cow/api",

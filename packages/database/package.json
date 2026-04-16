@@ -6,9 +6,9 @@
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc",
-    "generate": "dotenv -e ../../.env -- prisma generate",
-    "migrate": "dotenv -e ../../.env -- prisma migrate deploy",
-    "migrate:dev": "dotenv -e ../../.env -- prisma migrate dev"
+    "generate": "sh -c 'if [ -f ../../.env ]; then dotenv -e ../../.env -- prisma generate; else prisma generate; fi'",
+    "migrate": "sh -c 'if [ -f ../../.env ]; then dotenv -e ../../.env -- prisma migrate deploy; else prisma migrate deploy; fi'",
+    "migrate:dev": "sh -c 'if [ -f ../../.env ]; then dotenv -e ../../.env -- prisma migrate dev; else prisma migrate dev; fi'"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0"
