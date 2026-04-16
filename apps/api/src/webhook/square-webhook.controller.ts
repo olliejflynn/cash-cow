@@ -26,120 +26,31 @@ export class SquareWebhookController {
       amount_cents: amount == null ? "" : String(amount),
       status,
     };
+    // Keep runtime logs concise: only emit the four extracted values.
     console.log(
-      JSON.stringify(
-        {
-          event: "square_payment_debug_extracted",
-          received_at: new Date().toISOString(),
-          event_id: getStringField(payload, "event_id"),
-          event_type: getStringField(payload, "type"),
-          payment_id: paymentId,
-          status,
-          amount_cents: row.amount_cents,
-          payment_time: row.payment_time,
-          team_member: row.team_member,
-        },
-        null,
-        2
-      )
+      JSON.stringify({
+        payment_id: row.payment_id,
+        team_member: row.team_member,
+        amount_cents: row.amount_cents,
+        status: row.status,
+      })
     );
 
     if (status.toUpperCase() !== "COMPLETED") {
-      console.log(
-        JSON.stringify(
-          {
-            event: "square_payment_skipped_non_completed",
-            received_at: new Date().toISOString(),
-            event_id: getStringField(payload, "event_id"),
-            event_type: getStringField(payload, "type"),
-            payment_id: paymentId,
-            status,
-          },
-          null,
-          2
-        )
-      );
       return { ok: true };
     }
 
-    if (paymentId === "") {
-      console.log(
-        JSON.stringify(
-          {
-            event: "square_payment_skipped_missing_payment_id",
-            received_at: new Date().toISOString(),
-            event_id: getStringField(payload, "event_id"),
-            event_type: getStringField(payload, "type"),
-          },
-          null,
-          2
-        )
-      );
+    if (paymentId === "" || row.team_member.trim() === "") {
       return { ok: true };
     }
 
-    const alreadyExists = await this.sheetsService.squarePaymentIdExists(paymentId);
-    console.log(
-      JSON.stringify(
-        {
-          event: "square_payment_debug_duplicate_check",
-          received_at: new Date().toISOString(),
-          payment_id: paymentId,
-          exists_in_sheet: alreadyExists,
-        },
-        null,
-        2
-      )
-    );
-    if (alreadyExists) {
-      console.log(
-        JSON.stringify(
-          {
-            event: "square_payment_skipped_duplicate",
-            received_at: new Date().toISOString(),
-            event_id: getStringField(payload, "event_id"),
-            event_type: getStringField(payload, "type"),
-            payment_id: paymentId,
-          },
-          null,
-          2
-        )
-      );
+    const teamMemberAlreadyExists =
+      await this.sheetsService.squarePaymentTeamMemberExists(row.team_member);
+    if (teamMemberAlreadyExists) {
       return { ok: true };
     }
 
-    try {
-      await this.sheetsService.appendSquarePaymentRows([row]);
-    } catch (error: unknown) {
-      console.error(
-        JSON.stringify(
-          {
-            event: "square_payment_append_failed",
-            received_at: new Date().toISOString(),
-            payment_id: paymentId,
-            event_id: getStringField(payload, "event_id"),
-            event_type: getStringField(payload, "type"),
-            error: toErrorDetails(error),
-          },
-          null,
-          2
-        )
-      );
-      throw error;
-    }
-    console.log(
-      JSON.stringify(
-        {
-          event: "square_payment_row_appended",
-          received_at: new Date().toISOString(),
-          event_id: getStringField(payload, "event_id"),
-          event_type: getStringField(payload, "type"),
-          square_payments_row: row,
-        },
-        null,
-        2
-      )
-    );
+    await this.sheetsService.appendSquarePaymentRows([row]);
 
     return { ok: true };
   }
@@ -182,15 +93,4 @@ function getNumericField(
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value != null && typeof value === "object" && !Array.isArray(value);
-}
-
-function toErrorDetails(error: unknown): Record<string, unknown> {
-  if (error instanceof Error) {
-    return {
-      name: error.name,
-      message: error.message,
-      stack: error.stack,
-    };
-  }
-  return { value: error };
 }
