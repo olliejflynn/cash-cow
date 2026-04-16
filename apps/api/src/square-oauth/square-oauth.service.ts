@@ -191,6 +191,8 @@ export class SquareOAuthService {
   }> {
     const accessToken = await this.getStoredAccessToken();
     const teamIdByEmail = new Map<string, string>();
+    /** Preserves Square API order across paginated pages. */
+    const staffInOrder: Array<{ teamId: string; email: string }> = [];
     let fetchedTeamMembers = 0;
     let cursor: string | undefined;
 
@@ -235,13 +237,38 @@ export class SquareOAuthService {
       const members = body.team_members ?? [];
       fetchedTeamMembers += members.length;
       for (const member of members) {
-        const email = (member.email_address ?? "").trim().toLowerCase();
         const id = (member.id ?? "").trim();
-        if (email === "" || id === "") continue;
-        teamIdByEmail.set(email, id);
+        const emailRaw = (member.email_address ?? "").trim();
+        const emailLower = emailRaw.toLowerCase();
+
+        staffInOrder.push({
+          teamId: id === "" ? "(no team id)" : id,
+          email: emailRaw === "" ? "(no email)" : emailRaw,
+        });
+
+        if (emailLower === "" || id === "") continue;
+        teamIdByEmail.set(emailLower, id);
       }
       cursor = body.cursor;
     } while (cursor);
+
+    const idWidth = Math.min(
+      36,
+      Math.max(16, ...staffInOrder.map((r) => r.teamId.length), 16)
+    );
+    const rule = "-".repeat(idWidth + 3 + 48);
+    console.log("");
+    console.log(rule);
+    console.log(
+      `${"team_member_id".padEnd(idWidth)}  |  email`
+    );
+    console.log(rule);
+    for (const row of staffInOrder) {
+      const idCol = row.teamId.length > idWidth ? row.teamId.slice(0, idWidth - 1) + "…" : row.teamId;
+      console.log(`${idCol.padEnd(idWidth)}  |  ${row.email}`);
+    }
+    console.log(rule);
+    console.log(`Total: ${staffInOrder.length} team member(s)\n`);
 
     const updatedSellers =
       await this.sheetsService.setSellerSquareTeamIdsByEmail(teamIdByEmail);
