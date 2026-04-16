@@ -195,15 +195,21 @@ export class SquareOAuthService {
     let cursor: string | undefined;
 
     do {
-      const url = new URL("/v2/team-members", this.connectBaseUrl());
-      if (cursor) url.searchParams.set("cursor", cursor);
+      const url = new URL("/v2/team-members/search", this.connectBaseUrl());
 
       const response = await fetch(url.toString(), {
-        method: "GET",
+        method: "POST",
         headers: {
           Authorization: `Bearer ${accessToken}`,
           "Square-Version": "2024-10-17",
+          "Content-Type": "application/json",
         },
+        body: JSON.stringify({
+          query: {
+            limit: 200,
+            cursor,
+          },
+        }),
       });
 
       const body = (await response.json()) as ListTeamMembersResponse & {
