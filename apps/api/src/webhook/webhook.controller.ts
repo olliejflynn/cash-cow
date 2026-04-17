@@ -16,38 +16,89 @@ export class WebhookController {
   @Post("order")
   @HttpCode(200)
   async handleOrder(@Body() body: unknown): Promise<{ ok: boolean }> {
-    const payload = isObject(body) ? body : null;
-
-    if (isWooCommerceTestPing(payload)) {
-      return { ok: true };
-    }
-
-    const order = toWooOrder(payload);
-    const orderId = String(order.id ?? "").trim();
-    const orderStatus = String(order.status ?? "");
-
-    const { matchedRows } =
-      await this.sheetsService.updateSalesLogOrderStatusByOrderId(
-        orderId,
-        orderStatus
+    try {
+      const payload = isObject(body) ? body : null;
+      console.log(
+        "[WooWebhook] Received order webhook",
+        JSON.stringify({
+          body_type: typeof body,
+          payload_keys: payload ? Object.keys(payload).slice(0, 20) : [],
+        })
       );
-    if (matchedRows > 0) {
+
+      if (isWooCommerceTestPing(payload)) {
+        console.log("[WooWebhook] Received WooCommerce test ping");
+        return { ok: true };
+      }
+
+      const order = toWooOrder(payload);
+      const orderId = String(order.id ?? "").trim();
+      const orderStatus = String(order.status ?? "");
+
+      console.log(
+        "[WooWebhook] Parsed order payload",
+        JSON.stringify({
+          order_id: orderId,
+          order_status: orderStatus,
+          line_item_count: Array.isArray(order.line_items)
+            ? order.line_items.length
+            : 0,
+          order_key: order.order_key ?? "",
+          date_created: order.date_created ?? "",
+        })
+      );
+
+      const { matchedRows, updatedRows } =
+        await this.sheetsService.updateSalesLogOrderStatusByOrderId(
+          orderId,
+          orderStatus
+        );
+      console.log(
+        "[WooWebhook] Status sync result",
+        JSON.stringify({
+          order_id: orderId,
+          order_status: orderStatus,
+          matched_rows: matchedRows,
+          updated_rows: updatedRows,
+        })
+      );
+      if (matchedRows > 0) {
+        console.log(
+          `[WooWebhook] Existing order found; status sync complete for order_id=${orderId}`
+        );
+        return { ok: true };
+      }
+
+      const webhookEventId =
+        order.order_key != null && String(order.order_key).trim() !== ""
+          ? `${order.id}:${order.order_key}`
+          : `${order.id}:${order.date_created ?? Date.now()}`;
+
+      const salesRows = orderToSalesLogRows(order, {
+        webhookEventId,
+        defaultSellerCode:
+          this.configService.get<string>("defaultSellerCode") ?? "UNKNOWN",
+      });
+
+      console.log(
+        "[WooWebhook] No existing order rows; appending new sales rows",
+        JSON.stringify({
+          order_id: orderId,
+          order_status: orderStatus,
+          webhook_event_id: webhookEventId,
+          rows_to_append: salesRows.length,
+        })
+      );
+
+      await this.sheetsService.appendSalesLogRows(salesRows);
+      console.log(
+        `[WooWebhook] Append complete for order_id=${orderId} rows=${salesRows.length}`
+      );
       return { ok: true };
+    } catch (error) {
+      console.error("[WooWebhook] Failed to process order webhook", error);
+      throw error;
     }
-
-    const webhookEventId =
-      order.order_key != null && String(order.order_key).trim() !== ""
-        ? `${order.id}:${order.order_key}`
-        : `${order.id}:${order.date_created ?? Date.now()}`;
-
-    const salesRows = orderToSalesLogRows(order, {
-      webhookEventId,
-      defaultSellerCode:
-        this.configService.get<string>("defaultSellerCode") ?? "UNKNOWN",
-    });
-
-    await this.sheetsService.appendSalesLogRows(salesRows);
-    return { ok: true };
   }
 }
 

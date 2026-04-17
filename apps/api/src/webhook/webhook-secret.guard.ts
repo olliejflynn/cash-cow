@@ -37,6 +37,9 @@ export class WebhookSecretGuard implements CanActivate {
     const secret = this.config.get<string>("webhookSecret");
 
     if (!secret) {
+      console.log(
+        `[WooWebhook][Guard] WEBHOOK_SECRET not set; allowing request ${request.method} ${request.originalUrl ?? request.url}`
+      );
       return true;
     }
 
@@ -50,13 +53,22 @@ export class WebhookSecretGuard implements CanActivate {
 
     if (!signature || typeof signature !== "string") {
       if (isWooCommerceTestPing(request)) {
+        console.log(
+          "[WooWebhook][Guard] Allowing unsigned WooCommerce test ping"
+        );
         return true;
       }
+      console.warn(
+        `[WooWebhook][Guard] Rejecting request without ${WC_SIGNATURE_HEADER} header`
+      );
       throw new UnauthorizedException("Missing X-WC-Webhook-Signature header");
     }
 
     const rawBody = request.rawBody;
     if (!rawBody || !Buffer.isBuffer(rawBody)) {
+      console.warn(
+        "[WooWebhook][Guard] Rejecting request: rawBody unavailable for signature verification"
+      );
       throw new UnauthorizedException(
         "Missing body for signature verification"
       );
@@ -70,12 +82,17 @@ export class WebhookSecretGuard implements CanActivate {
     const expectedBuffer = Buffer.from(expected, "utf8");
 
     if (signatureBuffer.length !== expectedBuffer.length) {
+      console.warn(
+        `[WooWebhook][Guard] Rejecting request: signature length mismatch (got=${signatureBuffer.length}, expected=${expectedBuffer.length})`
+      );
       throw new UnauthorizedException("Invalid webhook signature");
     }
     if (!timingSafeEqual(signatureBuffer, expectedBuffer)) {
+      console.warn("[WooWebhook][Guard] Rejecting request: signature mismatch");
       throw new UnauthorizedException("Invalid webhook signature");
     }
 
+    console.log("[WooWebhook][Guard] Signature verified");
     return true;
   }
 }
