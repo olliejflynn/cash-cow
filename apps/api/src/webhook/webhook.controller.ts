@@ -23,6 +23,17 @@ export class WebhookController {
     }
 
     const order = toWooOrder(payload);
+    const orderId = String(order.id ?? "").trim();
+    const orderStatus = String(order.status ?? "");
+
+    const { matchedRows } =
+      await this.sheetsService.updateSalesLogOrderStatusByOrderId(
+        orderId,
+        orderStatus
+      );
+    if (matchedRows > 0) {
+      return { ok: true };
+    }
 
     const webhookEventId =
       order.order_key != null && String(order.order_key).trim() !== ""

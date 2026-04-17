@@ -97,6 +97,68 @@ export class SheetsService {
   }
 
   /**
+   * Update Sales_Log order status for all rows matching a WooCommerce order id.
+   * Returns counts so callers can decide whether an order already exists in the sheet.
+   */
+  async updateSalesLogOrderStatusByOrderId(
+    orderId: string,
+    orderStatus: string
+  ): Promise<{ matchedRows: number; updatedRows: number }> {
+    const normalizedOrderId = orderId.trim();
+    if (normalizedOrderId === "") {
+      return { matchedRows: 0, updatedRows: 0 };
+    }
+
+    const client = await this.getSheetsClient();
+    const response = await client.spreadsheets.values.get({
+      spreadsheetId: this.spreadsheetId,
+      range: `${this.salesLogSheetName}!A:Z`,
+    });
+    const values = response.data.values ?? [];
+    if (values.length === 0) {
+      return { matchedRows: 0, updatedRows: 0 };
+    }
+
+    const orderIdColumn = SALES_LOG_COLUMNS.indexOf("order_id");
+    const orderStatusColumn = SALES_LOG_COLUMNS.indexOf("order_status");
+    if (orderIdColumn < 0 || orderStatusColumn < 0) {
+      return { matchedRows: 0, updatedRows: 0 };
+    }
+
+    let matchedRows = 0;
+    const updates: sheets_v4.Schema$ValueRange[] = [];
+
+    for (let i = 1; i < values.length; i++) {
+      const row = values[i] ?? [];
+      const rowOrderId = String(row[orderIdColumn] ?? "").trim();
+      if (rowOrderId !== normalizedOrderId) continue;
+
+      matchedRows += 1;
+      const currentStatus = String(row[orderStatusColumn] ?? "").trim();
+      if (currentStatus === orderStatus) continue;
+
+      const rowNumber = i + 1;
+      const col = toA1Column(orderStatusColumn + 1);
+      updates.push({
+        range: `${this.salesLogSheetName}!${col}${rowNumber}`,
+        values: [[orderStatus]],
+      });
+    }
+
+    if (updates.length > 0) {
+      await client.spreadsheets.values.batchUpdate({
+        spreadsheetId: this.spreadsheetId,
+        requestBody: {
+          valueInputOption: "RAW",
+          data: updates,
+        },
+      });
+    }
+
+    return { matchedRows, updatedRows: updates.length };
+  }
+
+  /**
    * Append Square payment rows to the configured spreadsheet tab.
    * Column order: Payment ID, Payment Time, Team Member, Seller ID, Amount (cents), Status.
    */
