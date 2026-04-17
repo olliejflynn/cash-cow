@@ -6,7 +6,8 @@
     "apps/*"
   ],
   "scripts": {
-    "build": "npm run db:migrate && npm run generate -w @cash-cow/database && npm run build -w @cash-cow/database && npm run build -w @cash-cow/api",
+    "build": "npm run db:migrate && npm run generate -w @cash-cow/database && npm run build -w @cash-cow/database && npm run build -w @cash-cow/api && npm run sync:users-sheet",
+    "sync:users-sheet": "node apps/api/dist/cli/sync-users-sheet.cli.js",
     "test:webhook": "dotenv -e .env -- node scripts/send-test-webhook.mjs",
     "test:sheets": "dotenv -e .env -- node scripts/test-sheets-append.mjs",
     "db:migrate": "sh -c 'if [ -f .env ]; then dotenv -e .env -- npm run migrate -w @cash-cow/database; else npm run migrate -w @cash-cow/database; fi'",

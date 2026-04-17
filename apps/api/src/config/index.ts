@@ -28,4 +28,9 @@ export const config = () => ({
   squareOAuthScopes: process.env.SQUARE_OAUTH_SCOPES ?? "",
   squareTokenEncryptionKey: process.env.SQUARE_TOKEN_ENCRYPTION_KEY ?? "",
   squareOAuthSetupSecret: process.env.SQUARE_OAUTH_SETUP_SECRET ?? "",
+  woocommerceSiteUrl: (process.env.WOOCOMMERCE_SITE_URL ?? "").trim(),
+  woocommerceConsumerKey: (process.env.WOOCOMMERCE_CONSUMER_KEY ?? "").trim(),
+  woocommerceConsumerSecret: (process.env.WOOCOMMERCE_CONSUMER_SECRET ?? "").trim(),
+  usersSheetName: (process.env.USERS_SHEET_NAME ?? "users").trim(),
+  usersSheetSyncSecret: (process.env.USERS_SHEET_SYNC_SECRET ?? "").trim(),
 });

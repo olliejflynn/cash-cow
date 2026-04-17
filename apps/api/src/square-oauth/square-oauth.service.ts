@@ -184,14 +184,16 @@ export class SquareOAuthService {
     return { merchantId };
   }
 
-  async syncSellerSquareTeamIds(): Promise<{
+  /**
+   * Square team member id keyed by lowercase email (same mapping used for Sellers sheet sync).
+   */
+  async fetchTeamMemberIdByEmailMap(): Promise<{
+    teamIdByEmail: Map<string, string>;
     fetchedTeamMembers: number;
-    mappedByEmail: number;
-    updatedSellers: number;
+    staffInOrder: Array<{ teamId: string; email: string }>;
   }> {
     const accessToken = await this.getStoredAccessToken();
     const teamIdByEmail = new Map<string, string>();
-    /** Preserves Square API order across paginated pages. */
     const staffInOrder: Array<{ teamId: string; email: string }> = [];
     let fetchedTeamMembers = 0;
     let cursor: string | undefined;
@@ -199,10 +201,6 @@ export class SquareOAuthService {
     do {
       const url = new URL("/v2/team-members/search", this.connectBaseUrl());
 
-      // SearchTeamMembers body: `query` is SearchTeamMembersQuery (filters only).
-      // `limit` and `cursor` are top-level fields on the request, not inside `query`.
-      // See: https://developer.squareup.com/reference/square/objects/SearchTeamMembersQuery
-      // and https://developer.squareup.com/docs/team/integration#list-or-search-for-team-members
       const pageSize = 25;
       const requestBody: Record<string, unknown> = {
         query: {
@@ -251,6 +249,17 @@ export class SquareOAuthService {
       }
       cursor = body.cursor;
     } while (cursor);
+
+    return { teamIdByEmail, fetchedTeamMembers, staffInOrder };
+  }
+
+  async syncSellerSquareTeamIds(): Promise<{
+    fetchedTeamMembers: number;
+    mappedByEmail: number;
+    updatedSellers: number;
+  }> {
+    const { teamIdByEmail, fetchedTeamMembers, staffInOrder } =
+      await this.fetchTeamMemberIdByEmailMap();
 
     const idWidth = Math.min(
       36,

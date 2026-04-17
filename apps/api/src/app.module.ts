@@ -4,6 +4,7 @@ import { config } from "./config";
 import { AppController } from "./app.controller";
 import { SquareOAuthModule } from "./square-oauth/square-oauth.module";
 import { WebhookModule } from "./webhook/webhook.module";
+import { WooUsersSheetSyncModule } from "./woo-sync/woo-users-sheet-sync.module";
 
 @Module({
   imports: [
@@ -14,6 +15,7 @@ import { WebhookModule } from "./webhook/webhook.module";
     }),
     WebhookModule,
     SquareOAuthModule,
+    WooUsersSheetSyncModule,
   ],
   controllers: [AppController],
 })

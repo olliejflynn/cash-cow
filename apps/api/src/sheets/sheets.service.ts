@@ -37,6 +37,7 @@ export class SheetsService {
   private salesLogSheetName: string = "Sales_Log";
   private squarePaymentsSheetName: string = "Square_payments";
   private sellersSheetName: string = "Sellers";
+  private usersSheetName: string = "users";
 
   constructor(private readonly config: ConfigService) {
     this.spreadsheetId = this.config.get<string>("spreadsheetId") ?? "";
@@ -45,6 +46,7 @@ export class SheetsService {
     this.squarePaymentsSheetName =
       this.config.get<string>("squarePaymentsSheetName") ?? "Square_payments";
     this.sellersSheetName = "Sellers";
+    this.usersSheetName = this.config.get<string>("usersSheetName") ?? "users";
   }
 
   private async getSheetsClient(): Promise<sheets_v4.Sheets> {
@@ -313,6 +315,77 @@ export class SheetsService {
     });
 
     return updates.length;
+  }
+
+  /**
+   * Replace the Users tab with header row + data. Headers:
+   * user_id, first_name, last_name, email, Square_team_ID
+   */
+  async replaceUsersSheetRows(
+    rows: Array<{
+      user_id: string;
+      first_name: string;
+      last_name: string;
+      email: string;
+      square_team_id: string;
+    }>
+  ): Promise<void> {
+    const client = await this.getSheetsClient();
+    const spreadsheetId = this.spreadsheetId.trim();
+    if (spreadsheetId === "") {
+      throw new Error("SPREADSHEET_ID is not set");
+    }
+
+    const meta = await client.spreadsheets.get({
+      spreadsheetId,
+      fields: "sheets.properties",
+    });
+    const sheets = meta.data.sheets ?? [];
+    const hasTab = sheets.some(
+      (s) => s.properties?.title === this.usersSheetName
+    );
+    if (!hasTab) {
+      await client.spreadsheets.batchUpdate({
+        spreadsheetId,
+        requestBody: {
+          requests: [
+            {
+              addSheet: {
+                properties: { title: this.usersSheetName },
+              },
+            },
+          ],
+        },
+      });
+    }
+
+    const headers = [
+      "user_id",
+      "first_name",
+      "last_name",
+      "email",
+      "Square_team_ID",
+    ];
+    const dataRows = rows.map((r) => [
+      r.user_id,
+      r.first_name,
+      r.last_name,
+      r.email,
+      r.square_team_id,
+    ]);
+    const values = [headers, ...dataRows];
+
+    await client.spreadsheets.values.clear({
+      spreadsheetId,
+      range: `${this.usersSheetName}!A:E`,
+    });
+
+    await client.spreadsheets.values.update({
+      spreadsheetId,
+      range: `${this.usersSheetName}!A1:E${values.length}`,
+      valueInputOption: "USER_ENTERED",
+      requestBody: { values },
+    });
   }
 }
 
