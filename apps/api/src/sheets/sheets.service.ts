@@ -341,23 +341,58 @@ export class SheetsService {
       fields: "sheets.properties",
     });
     const sheets = meta.data.sheets ?? [];
-    const hasTab = sheets.some(
-      (s) => s.properties?.title === this.usersSheetName
-    );
-    if (!hasTab) {
-      await client.spreadsheets.batchUpdate({
-        spreadsheetId,
-        requestBody: {
-          requests: [
-            {
-              addSheet: {
-                properties: { title: this.usersSheetName },
+    const wanted = this.usersSheetName.trim();
+    const wantedLower = wanted.toLowerCase();
+    /** Google treats tab names as case-insensitive for uniqueness; use the doc's actual title in A1 ranges. */
+    let sheetTitleForRange =
+      sheets
+        .map((s) => s.properties?.title)
+        .find((t) => t != null && t.trim().toLowerCase() === wantedLower) ?? null;
+
+    if (sheetTitleForRange == null) {
+      try {
+        await client.spreadsheets.batchUpdate({
+          spreadsheetId,
+          requestBody: {
+            requests: [
+              {
+                addSheet: {
+                  properties: { title: wanted },
+                },
               },
-            },
-          ],
-        },
-      });
+            ],
+          },
+        });
+        sheetTitleForRange = wanted;
+      } catch (err: unknown) {
+        const msg =
+          err &&
+          typeof err === "object" &&
+          "message" in err &&
+          typeof (err as { message: unknown }).message === "string"
+            ? (err as { message: string }).message
+            : String(err);
+        if (
+          msg.includes("already exists") ||
+          msg.includes("Duplicate") ||
+          msg.includes("duplicate")
+        ) {
+          const meta2 = await client.spreadsheets.get({
+            spreadsheetId,
+            fields: "sheets.properties",
+          });
+          sheetTitleForRange =
+            (meta2.data.sheets ?? [])
+              .map((s) => s.properties?.title)
+              .find((t) => t != null && t.trim().toLowerCase() === wantedLower) ??
+            wanted;
+        } else {
+          throw err;
+        }
+      }
     }
+
+    const rangePrefix = a1SheetRangePrefix(sheetTitleForRange);
 
     const headers = [
       "user_id",
@@ -377,12 +412,12 @@ export class SheetsService {
 
     await client.spreadsheets.values.clear({
       spreadsheetId,
-      range: `${this.usersSheetName}!A:E`,
+      range: `${rangePrefix}A:E`,
     });
 
     await client.spreadsheets.values.update({
       spreadsheetId,
-      range: `${this.usersSheetName}!A1:E${values.length}`,
+      range: `${rangePrefix}A1:E${values.length}`,
       valueInputOption: "USER_ENTERED",
       requestBody: { values },
     });
@@ -398,4 +433,14 @@ function toA1Column(index1Based: number): string {
     index = Math.floor((index - 1) / 26);
   }
   return label;
+}
+
+/** Sheet name prefix for A1 ranges (quote if needed per Google Sheets rules). */
+function a1SheetRangePrefix(sheetTitle: string): string {
+  const t = sheetTitle.trim();
+  if (t === "") return "";
+  if (/^[A-Za-z0-9_]+$/.test(t)) {
+    return `${t}!`;
+  }
+  return `'${t.replace(/'/g, "''")}'!`;
 }
