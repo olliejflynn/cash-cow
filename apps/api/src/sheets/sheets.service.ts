@@ -166,7 +166,27 @@ export class SheetsService {
     if (rows.length === 0) return;
 
     const client = await this.getSheetsClient();
-    const values = rows.map((row) =>
+    const existingIdsResponse = await client.spreadsheets.values.get({
+      spreadsheetId: this.spreadsheetId,
+      range: `${this.squarePaymentsSheetName}!A:A`,
+    });
+    const existingIds = new Set(
+      (existingIdsResponse.data.values ?? [])
+        .map((row) => (Array.isArray(row) ? String(row[0] ?? "").trim() : ""))
+        .filter((id) => id !== "")
+    );
+
+    const uniqueRows = rows.filter((row) => {
+      const id = String(row.payment_id ?? "").trim();
+      if (id === "") return true;
+      if (existingIds.has(id)) return false;
+      existingIds.add(id);
+      return true;
+    });
+
+    if (uniqueRows.length === 0) return;
+
+    const values = uniqueRows.map((row) =>
       SQUARE_PAYMENT_COLUMNS.map((key) => row[key] ?? "")
     );
 
