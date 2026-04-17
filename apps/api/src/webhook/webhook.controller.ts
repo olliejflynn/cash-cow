@@ -100,6 +100,74 @@ export class WebhookController {
       throw error;
     }
   }
+
+  @Post("order-updated")
+  @HttpCode(200)
+  async handleOrderUpdated(@Body() body: unknown): Promise<{ ok: boolean }> {
+    try {
+      const payload = isObject(body) ? body : null;
+      console.log(
+        "[WooWebhook][OrderUpdated] Received order webhook",
+        JSON.stringify({
+          body_type: typeof body,
+          payload_keys: payload ? Object.keys(payload).slice(0, 20) : [],
+        })
+      );
+
+      if (isWooCommerceTestPing(payload)) {
+        console.log(
+          "[WooWebhook][OrderUpdated] Received WooCommerce test ping"
+        );
+        return { ok: true };
+      }
+
+      const order = toWooOrder(payload);
+      const orderId = String(order.id ?? "").trim();
+      const orderStatus = String(order.status ?? "");
+
+      console.log(
+        "[WooWebhook][OrderUpdated] Parsed order payload",
+        JSON.stringify({
+          order_id: orderId,
+          order_status: orderStatus,
+          line_item_count: Array.isArray(order.line_items)
+            ? order.line_items.length
+            : 0,
+          order_key: order.order_key ?? "",
+          date_created: order.date_created ?? "",
+        })
+      );
+
+      const { matchedRows, updatedRows } =
+        await this.sheetsService.updateSalesLogOrderStatusByOrderId(
+          orderId,
+          orderStatus
+        );
+      console.log(
+        "[WooWebhook][OrderUpdated] Status sync result",
+        JSON.stringify({
+          order_id: orderId,
+          order_status: orderStatus,
+          matched_rows: matchedRows,
+          updated_rows: updatedRows,
+        })
+      );
+
+      if (matchedRows === 0) {
+        console.warn(
+          `[WooWebhook][OrderUpdated] No Sales_Log rows found for order_id=${orderId}; nothing updated`
+        );
+      }
+
+      return { ok: true };
+    } catch (error) {
+      console.error(
+        "[WooWebhook][OrderUpdated] Failed to process order update webhook",
+        error
+      );
+      throw error;
+    }
+  }
 }
 
 function isObject(v: unknown): v is Record<string, unknown> {
