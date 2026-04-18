@@ -11,9 +11,10 @@ export interface SalesLogRow {
   ticket_type: string;
   qty: string;
   unit_price_paid: string;
+  unit_commission: string;
   gross_amount: string;
+  gross_commission: string;
   seller_code: string;
   "Category (Company)": string;
   hand_in_amount: string;
-  notes: string;
 }

@@ -25,11 +25,12 @@ const SALES_LOG_COLUMNS = [
   "ticket_type",
   "qty",
   "unit_price_paid",
+  "unit_commission",
   "gross_amount",
+  "gross_commission",
   "seller_code",
   "Category (Company)",
   "hand_in_amount",
-  "notes",
 ];
 
 function stripQuotes(s) {
@@ -86,11 +87,12 @@ async function main() {
     ticket_type: "Sheets connectivity test",
     qty: "1",
     unit_price_paid: "0",
+    unit_commission: "0",
     gross_amount: "0",
+    gross_commission: "0",
     seller_code: "TEST",
     "Category (Company)": "",
     hand_in_amount: "0",
-    notes: "scripts/test-sheets-append.mjs — safe to delete",
   };
 
   const values = [SALES_LOG_COLUMNS.map((key) => testRow[key] ?? "")];

@@ -14,11 +14,12 @@ const SALES_LOG_COLUMNS: (keyof SalesLogRow)[] = [
   "ticket_type",
   "qty",
   "unit_price_paid",
+  "unit_commission",
   "gross_amount",
+  "gross_commission",
   "seller_code",
   "Category (Company)",
   "hand_in_amount",
-  "notes",
 ];
 /** Matches sheet headers: Payment ID, Payment Time, Team Member, Seller ID, Amount (cents), Status */
 const SQUARE_PAYMENT_COLUMNS: (keyof SquarePaymentRow)[] = [
@@ -35,6 +36,7 @@ export class SheetsService {
   private sheets: sheets_v4.Sheets | null = null;
   private spreadsheetId: string = "";
   private salesLogSheetName: string = "Sales_Log";
+  private ticketRulesSheetName: string = "Ticket_rules";
   private squarePaymentsSheetName: string = "Square_payments";
   private sellersSheetName: string = "Sellers";
   private usersSheetName: string = "users";
@@ -43,6 +45,8 @@ export class SheetsService {
     this.spreadsheetId = this.config.get<string>("spreadsheetId") ?? "";
     this.salesLogSheetName =
       this.config.get<string>("salesLogSheetName") ?? "Sales_Log";
+    this.ticketRulesSheetName =
+      this.config.get<string>("ticketRulesSheetName") ?? "Ticket_rules";
     this.squarePaymentsSheetName =
       this.config.get<string>("squarePaymentsSheetName") ?? "Square_payments";
     this.sellersSheetName = "Sellers";
@@ -75,6 +79,31 @@ export class SheetsService {
     });
     this.sheets = google.sheets({ version: "v4", auth });
     return this.sheets;
+  }
+
+  /**
+   * Load Ticket_type_Slug → Commission from the Ticket_rules tab (header row skipped).
+   * First data row wins for duplicate slugs.
+   */
+  async getTicketCommissionBySlug(): Promise<ReadonlyMap<string, number>> {
+    const client = await this.getSheetsClient();
+    const response = await client.spreadsheets.values.get({
+      spreadsheetId: this.spreadsheetId,
+      range: `${this.ticketRulesSheetName}!A:B`,
+    });
+    const rows = response.data.values ?? [];
+    const map = new Map<string, number>();
+    for (let i = 1; i < rows.length; i++) {
+      const row = rows[i] ?? [];
+      const slug = String(row[0] ?? "").trim();
+      if (slug === "") continue;
+      if (map.has(slug)) continue;
+      const raw = row[1];
+      const n = parseFloat(String(raw ?? "").replace(/,/g, ""));
+      const commission = Number.isFinite(n) ? n : 0;
+      map.set(slug, commission);
+    }
+    return map;
   }
 
   /**

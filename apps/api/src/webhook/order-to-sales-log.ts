@@ -1,16 +1,16 @@
 import type { WooCommerceOrderDto } from "./dto/woocommerce-order.dto";
 import type { SalesLogRow } from "./sales-log.types";
 
-const COMMISSION_PER_TICKET = 10;
-
 export interface OrderToSalesLogOptions {
   webhookEventId: string;
   defaultSellerCode: string;
+  /** Ticket_type_Slug → Commission from the Ticket_rules sheet */
+  commissionBySlug: ReadonlyMap<string, number>;
 }
 
 /**
  * Map a WooCommerce order to one or more Sales_Log rows (one per line item).
- * Uses default seller code and hand-in for MVP (no Ticket_Rules/Seller_Overrides).
+ * Commission per unit comes from `commissionBySlug` keyed by the same value as `ticket_type`.
  */
 export function orderToSalesLogRows(
   order: WooCommerceOrderDto,
@@ -20,14 +20,24 @@ export function orderToSalesLogRows(
   const orderCreatedAt = order.date_created ?? now;
   const orderId = String(order.id);
   const sellerCode = deriveSellerCode(order, options.defaultSellerCode);
+  const { commissionBySlug } = options;
 
   return (order.line_items ?? []).map((item) => {
     const qty = Number(item.quantity) || 1;
     const isDeposit = isDeposit20(item);
     const unitPricePaid = isDeposit ? 20 : getPaidInFullUnitPrice(item, qty);
     const grossAmount = unitPricePaid * qty;
-    const handInAmount = grossAmount - qty * COMMISSION_PER_TICKET;
     const ticketType = getTicketType(item);
+    const slug = ticketType.trim();
+    const unitCommission =
+      slug === "" ? 0 : (commissionBySlug.get(slug) ?? 0);
+    if (slug !== "" && !commissionBySlug.has(slug)) {
+      console.warn(
+        `[orderToSalesLogRows] No Ticket_rules row for ticket_type slug=${JSON.stringify(slug)} order_id=${orderId}`
+      );
+    }
+    const grossCommission = unitCommission * qty;
+    const handInAmount = grossAmount - grossCommission;
     const categoryCompany = getCategoryCompany(item);
 
     return {
@@ -40,11 +50,12 @@ export function orderToSalesLogRows(
       ticket_type: ticketType,
       qty: String(qty),
       unit_price_paid: String(unitPricePaid),
+      unit_commission: String(unitCommission),
       gross_amount: String(grossAmount),
+      gross_commission: String(grossCommission),
       seller_code: sellerCode,
       "Category (Company)": categoryCompany,
       hand_in_amount: String(handInAmount),
-      notes: "",
     };
   });
 }
