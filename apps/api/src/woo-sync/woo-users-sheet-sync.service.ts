@@ -57,6 +57,13 @@ export class WooUsersSheetSyncService {
         await this.squareOAuthService.fetchTeamMemberIdByEmailMap();
       teamIdByEmail = map;
       squareFetched = fetchedTeamMembers;
+      console.log(
+        "[UsersSheetSync] Square team-member map loaded",
+        JSON.stringify({
+          square_team_member_rows: fetchedTeamMembers,
+          distinct_emails_with_team_id: map.size,
+        })
+      );
     } catch (err) {
       console.warn(
         "[UsersSheetSync] Square team member list unavailable (continuing without Square_team_ID):",
@@ -68,6 +75,16 @@ export class WooUsersSheetSyncService {
       site,
       consumerKey,
       consumerSecret
+    );
+    console.log(
+      "[UsersSheetSync] WooCommerce customers API finished",
+      JSON.stringify({
+        total_customers: customers.length,
+        sample_ids: customers.slice(0, 5).map((c) => c.id),
+        sample_emails_present: customers
+          .slice(0, 3)
+          .map((c) => ((c.email ?? "").trim() !== "" ? "yes" : "no")),
+      })
     );
 
     const rows = customers.map((c) => {
@@ -86,10 +103,23 @@ export class WooUsersSheetSyncService {
 
     const rowsWithSquareTeamId = rows.filter((r) => r.square_team_id !== "").length;
 
+    console.log(
+      "[UsersSheetSync] About to write Google Sheet",
+      JSON.stringify({
+        data_rows: rows.length,
+        rows_with_square_team_id: rowsWithSquareTeamId,
+        sample_row: rows[0] ?? null,
+      })
+    );
     await this.sheetsService.replaceUsersSheetRows(rows);
 
     console.log(
-      `[UsersSheetSync] Wrote ${rows.length} user row(s); ${rowsWithSquareTeamId} with Square_team_ID; Square members fetched: ${squareFetched}`
+      "[UsersSheetSync] Google Sheet replace completed",
+      JSON.stringify({
+        data_rows: rows.length,
+        rows_with_square_team_id: rowsWithSquareTeamId,
+        square_team_member_rows: squareFetched,
+      })
     );
 
     return {
@@ -123,15 +153,52 @@ export class WooUsersSheetSyncService {
         },
       });
 
+      const contentType = (res.headers.get("content-type") ?? "").toLowerCase();
+      console.log(
+        "[UsersSheetSync] WooCommerce GET /customers response",
+        JSON.stringify({
+          page,
+          per_page: perPage,
+          http_status: res.status,
+          content_type: contentType.slice(0, 80),
+        })
+      );
+
       if (!res.ok) {
         const text = await res.text();
+        console.error(
+          "[UsersSheetSync] WooCommerce error body (truncated)",
+          text.slice(0, 800)
+        );
         throw new Error(
           `WooCommerce customers fetch failed (${res.status}): ${text.slice(0, 500)}`
         );
       }
 
-      const batch = (await res.json()) as WooCustomer[];
-      if (!Array.isArray(batch) || batch.length === 0) break;
+      const raw = await res.json();
+      if (!Array.isArray(raw)) {
+        console.error(
+          "[UsersSheetSync] WooCommerce returned non-array JSON; type=",
+          typeof raw,
+          "keys=",
+          raw && typeof raw === "object"
+            ? Object.keys(raw as object).slice(0, 20)
+            : []
+        );
+        throw new Error(
+          "WooCommerce customers response was not a JSON array (check REST URL and permissions)"
+        );
+      }
+      const batch = raw as WooCustomer[];
+      console.log(
+        "[UsersSheetSync] WooCommerce page parsed",
+        JSON.stringify({
+          page,
+          batch_length: batch.length,
+          running_total_after_page: all.length + batch.length,
+        })
+      );
+      if (batch.length === 0) break;
       all.push(...batch);
       if (batch.length < perPage) break;
       page += 1;

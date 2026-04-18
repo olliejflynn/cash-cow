@@ -393,6 +393,15 @@ export class SheetsService {
     }
 
     const rangePrefix = a1SheetRangePrefix(sheetTitleForRange);
+    const sheetDebug = {
+      spreadsheet_id_prefix: `${spreadsheetId.slice(0, 8)}…`,
+      configured_tab_name: wanted,
+      resolved_tab_title: sheetTitleForRange,
+      range_prefix_for_api: `${rangePrefix.slice(0, 40)}${rangePrefix.length > 40 ? "…" : ""}`,
+      data_row_count: rows.length,
+      total_value_rows_including_header: 1 + rows.length,
+    };
+    console.log("[UsersSheetSync][Sheets] Resolved tab and ranges", JSON.stringify(sheetDebug));
 
     const headers = [
       "user_id",
@@ -410,17 +419,32 @@ export class SheetsService {
     ]);
     const values = [headers, ...dataRows];
 
+    const clearRange = `${rangePrefix}A:E`;
     await client.spreadsheets.values.clear({
       spreadsheetId,
-      range: `${rangePrefix}A:E`,
+      range: clearRange,
     });
+    console.log(
+      "[UsersSheetSync][Sheets] values.clear OK",
+      JSON.stringify({ range: clearRange })
+    );
 
-    await client.spreadsheets.values.update({
+    const updateRange = `${rangePrefix}A1:E${values.length}`;
+    const updateRes = await client.spreadsheets.values.update({
       spreadsheetId,
-      range: `${rangePrefix}A1:E${values.length}`,
+      range: updateRange,
       valueInputOption: "USER_ENTERED",
       requestBody: { values },
     });
+    console.log(
+      "[UsersSheetSync][Sheets] values.update OK",
+      JSON.stringify({
+        range: updateRange,
+        updated_range: updateRes.data.updatedRange ?? "",
+        updated_rows: updateRes.data.updatedRows ?? null,
+        updated_columns: updateRes.data.updatedColumns ?? null,
+      })
+    );
   }
 }
 
