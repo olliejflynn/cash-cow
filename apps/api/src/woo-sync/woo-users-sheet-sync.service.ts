@@ -3,11 +3,13 @@ import { ConfigService } from "@nestjs/config";
 import { SheetsService } from "../sheets/sheets.service";
 import { SquareOAuthService } from "../square-oauth/square-oauth.service";
 
-interface WooCustomer {
+/** WordPress REST `/wp/v2/users` (context=edit) — fields used for the sheet. */
+interface WpRestUser {
   id: number;
   first_name?: string;
   last_name?: string;
   email?: string;
+  name?: string;
 }
 
 @Injectable()
@@ -19,8 +21,8 @@ export class WooUsersSheetSyncService {
   ) {}
 
   /**
-   * Pull WooCommerce customers, merge Square team IDs by email, replace the Users sheet.
-   * If WooCommerce env is incomplete, logs and returns without throwing (safe for CI builds).
+   * Pull WordPress users via REST, merge Square team IDs by email, replace the Users sheet.
+   * If WordPress REST env is incomplete, logs and returns without throwing (safe for CI builds).
    */
   async run(): Promise<{
     ok: boolean;
@@ -30,20 +32,22 @@ export class WooUsersSheetSyncService {
     squareTeamMembersFetched: number;
     rowsWithSquareTeamId: number;
   }> {
-    const site = (this.config.get<string>("woocommerceSiteUrl") ?? "")
+    const site = (this.config.get<string>("wordpressRestSiteUrl") ?? "")
       .trim()
       .replace(/\/+$/, "");
-    const consumerKey = (this.config.get<string>("woocommerceConsumerKey") ?? "").trim();
-    const consumerSecret = (this.config.get<string>("woocommerceConsumerSecret") ?? "").trim();
+    const wpUser = (this.config.get<string>("wordpressRestUsername") ?? "").trim();
+    const wpAppPassword = (
+      this.config.get<string>("wordpressRestApplicationPassword") ?? ""
+    ).trim();
 
-    if (!site || !consumerKey || !consumerSecret) {
+    if (!site || !wpUser || !wpAppPassword) {
       console.warn(
-        "[UsersSheetSync] Skipping: set WOOCOMMERCE_SITE_URL, WOOCOMMERCE_CONSUMER_KEY, and WOOCOMMERCE_CONSUMER_SECRET"
+        "[UsersSheetSync] Skipping: set WORDPRESS_REST_USERNAME, WORDPRESS_REST_APPLICATION_PASSWORD, and WORDPRESS_SITE_URL (or WOOCOMMERCE_SITE_URL as the same site base URL)"
       );
       return {
         ok: true,
         skipped: true,
-        reason: "woocommerce_env_incomplete",
+        reason: "wordpress_rest_env_incomplete",
         customersWritten: 0,
         squareTeamMembersFetched: 0,
         rowsWithSquareTeamId: 0,
@@ -71,31 +75,29 @@ export class WooUsersSheetSyncService {
       );
     }
 
-    const customers = await this.fetchAllWooCustomers(
-      site,
-      consumerKey,
-      consumerSecret
-    );
+    const users = await this.fetchAllWordPressUsers(site, wpUser, wpAppPassword);
     console.log(
-      "[UsersSheetSync] WooCommerce customers API finished",
+      "[UsersSheetSync] WordPress users API finished",
       JSON.stringify({
-        total_customers: customers.length,
-        sample_ids: customers.slice(0, 5).map((c) => c.id),
-        sample_emails_present: customers
+        total_users: users.length,
+        sample_ids: users.slice(0, 5).map((u) => u.id),
+        sample_emails_present: users
           .slice(0, 3)
-          .map((c) => ((c.email ?? "").trim() !== "" ? "yes" : "no")),
+          .map((u) => ((u.email ?? "").trim() !== "" ? "yes" : "no")),
       })
     );
 
-    const rows = customers.map((c) => {
-      const email = (c.email ?? "").trim();
+    const rows = users.map((u) => {
+      const email = (u.email ?? "").trim();
       const emailLower = email.toLowerCase();
       const squareTeamId =
         emailLower !== "" ? (teamIdByEmail.get(emailLower) ?? "") : "";
+      const first = (u.first_name ?? "").trim();
+      const last = (u.last_name ?? "").trim();
       return {
-        user_id: String(c.id),
-        first_name: (c.first_name ?? "").trim(),
-        last_name: (c.last_name ?? "").trim(),
+        user_id: String(u.id),
+        first_name: first !== "" ? first : (u.name ?? "").trim(),
+        last_name: last,
         email,
         square_team_id: squareTeamId,
       };
@@ -131,20 +133,24 @@ export class WooUsersSheetSyncService {
     };
   }
 
-  private async fetchAllWooCustomers(
+  private async fetchAllWordPressUsers(
     site: string,
-    consumerKey: string,
-    consumerSecret: string
-  ): Promise<WooCustomer[]> {
-    const auth = Buffer.from(`${consumerKey}:${consumerSecret}`).toString("base64");
+    username: string,
+    applicationPassword: string
+  ): Promise<WpRestUser[]> {
+    const auth = Buffer.from(
+      `${username}:${applicationPassword}`,
+      "utf8"
+    ).toString("base64");
     const perPage = 100;
-    const all: WooCustomer[] = [];
+    const all: WpRestUser[] = [];
     let page = 1;
 
     for (;;) {
-      const url = new URL(`${site}/wp-json/wc/v3/customers`);
+      const url = new URL(`${site}/wp-json/wp/v2/users`);
       url.searchParams.set("per_page", String(perPage));
       url.searchParams.set("page", String(page));
+      url.searchParams.set("context", "edit");
 
       const res = await fetch(url.toString(), {
         headers: {
@@ -155,7 +161,7 @@ export class WooUsersSheetSyncService {
 
       const contentType = (res.headers.get("content-type") ?? "").toLowerCase();
       console.log(
-        "[UsersSheetSync] WooCommerce GET /customers response",
+        "[UsersSheetSync] WordPress GET /wp/v2/users response",
         JSON.stringify({
           page,
           per_page: perPage,
@@ -167,18 +173,18 @@ export class WooUsersSheetSyncService {
       if (!res.ok) {
         const text = await res.text();
         console.error(
-          "[UsersSheetSync] WooCommerce error body (truncated)",
+          "[UsersSheetSync] WordPress error body (truncated)",
           text.slice(0, 800)
         );
         throw new Error(
-          `WooCommerce customers fetch failed (${res.status}): ${text.slice(0, 500)}`
+          `WordPress users fetch failed (${res.status}): ${text.slice(0, 500)}`
         );
       }
 
       const raw = await res.json();
       if (!Array.isArray(raw)) {
         console.error(
-          "[UsersSheetSync] WooCommerce returned non-array JSON; type=",
+          "[UsersSheetSync] WordPress returned non-array JSON; type=",
           typeof raw,
           "keys=",
           raw && typeof raw === "object"
@@ -186,12 +192,12 @@ export class WooUsersSheetSyncService {
             : []
         );
         throw new Error(
-          "WooCommerce customers response was not a JSON array (check REST URL and permissions)"
+          "WordPress users response was not a JSON array (check REST URL, user capabilities, and application password)"
         );
       }
-      const batch = raw as WooCustomer[];
+      const batch = raw as WpRestUser[];
       console.log(
-        "[UsersSheetSync] WooCommerce page parsed",
+        "[UsersSheetSync] WordPress users page parsed",
         JSON.stringify({
           page,
           batch_length: batch.length,

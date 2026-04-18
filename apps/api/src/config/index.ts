@@ -28,9 +28,16 @@ export const config = () => ({
   squareOAuthScopes: process.env.SQUARE_OAUTH_SCOPES ?? "",
   squareTokenEncryptionKey: process.env.SQUARE_TOKEN_ENCRYPTION_KEY ?? "",
   squareOAuthSetupSecret: process.env.SQUARE_OAUTH_SETUP_SECRET ?? "",
-  woocommerceSiteUrl: (process.env.WOOCOMMERCE_SITE_URL ?? "").trim(),
-  woocommerceConsumerKey: (process.env.WOOCOMMERCE_CONSUMER_KEY ?? "").trim(),
-  woocommerceConsumerSecret: (process.env.WOOCOMMERCE_CONSUMER_SECRET ?? "").trim(),
+  /** WordPress site base URL for REST (users sync). WORDPRESS_SITE_URL overrides WOOCOMMERCE_SITE_URL. */
+  wordpressRestSiteUrl: (
+    process.env.WORDPRESS_SITE_URL ??
+    process.env.WOOCOMMERCE_SITE_URL ??
+    ""
+  ).trim(),
+  wordpressRestUsername: (process.env.WORDPRESS_REST_USERNAME ?? "").trim(),
+  wordpressRestApplicationPassword: (
+    process.env.WORDPRESS_REST_APPLICATION_PASSWORD ?? ""
+  ).trim(),
   usersSheetName: (process.env.USERS_SHEET_NAME ?? "users").trim(),
   usersSheetSyncSecret: (process.env.USERS_SHEET_SYNC_SECRET ?? "").trim(),
 });
