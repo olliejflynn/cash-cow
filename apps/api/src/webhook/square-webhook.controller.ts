@@ -48,7 +48,7 @@ export class SquareWebhookController {
       return { ok: true };
     }
 
-    row.seller_id = sellerId;
+    row.seller_id = String(sellerId);
 
     console.log(
       JSON.stringify({

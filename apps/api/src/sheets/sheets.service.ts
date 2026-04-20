@@ -245,8 +245,46 @@ export class SheetsService {
 
       if (uniqueRows.length === 0) return;
 
-      const values = uniqueRows.map((row) =>
-        SQUARE_PAYMENT_COLUMNS.map((key) => row[key] ?? "")
+      const rowsForAppend: Array<{
+        row: SquarePaymentRow;
+        sellerNum: number;
+        amountCents: number;
+      }> = [];
+      for (const row of uniqueRows) {
+        const sellerNum = parseSellerIdInteger(row.seller_id);
+        if (sellerNum == null) {
+          console.warn(
+            "[SheetsService] Skipping Square payment row: seller_id must be a non-negative integer",
+            JSON.stringify({
+              payment_id: row.payment_id,
+              seller_id: row.seller_id,
+            })
+          );
+          continue;
+        }
+        const amountCents = parseAmountCentsInteger(row.amount_cents);
+        if (amountCents == null) {
+          console.warn(
+            "[SheetsService] Skipping Square payment row: amount_cents must be a safe integer",
+            JSON.stringify({
+              payment_id: row.payment_id,
+              amount_cents: row.amount_cents,
+            })
+          );
+          continue;
+        }
+        rowsForAppend.push({ row, sellerNum, amountCents });
+      }
+      if (rowsForAppend.length === 0) return;
+
+      // Use JSON numbers for seller_id and amount_cents so Sheets stores numeric cells (not text with a leading ').
+      const values: (string | number)[][] = rowsForAppend.map(
+        ({ row, sellerNum, amountCents }) =>
+          SQUARE_PAYMENT_COLUMNS.map((key) => {
+            if (key === "seller_id") return sellerNum;
+            if (key === "amount_cents") return amountCents;
+            return row[key] ?? "";
+          })
       );
 
       await client.spreadsheets.values.append({
@@ -286,7 +324,7 @@ export class SheetsService {
    */
   async getSellerIdBySquareTeamMemberId(
     teamMemberId: string
-  ): Promise<string | null> {
+  ): Promise<number | null> {
     const normalizedTeam = teamMemberId.trim();
     if (normalizedTeam === "") return null;
 
@@ -312,8 +350,8 @@ export class SheetsService {
       const row = values[i] ?? [];
       const teamCell = String(row[teamIdx] ?? "").trim();
       if (teamCell !== normalizedTeam) continue;
-      const sellerId = String(row[sellerIdx] ?? "").trim();
-      return sellerId === "" ? null : sellerId;
+      const parsed = parseSellerIdInteger(row[sellerIdx]);
+      return parsed;
     }
     return null;
   }
@@ -508,6 +546,46 @@ export class SheetsService {
       })
     );
   }
+}
+
+/**
+ * Sellers sheet / webhook may contain a plain integer, a string of digits, or text
+ * entered in Sheets with a leading apostrophe (stored/read as a string). Only
+ * non-negative safe integers are accepted for Square_payments.seller_id.
+ */
+function parseSellerIdInteger(value: unknown): number | null {
+  if (typeof value === "number") {
+    if (!Number.isFinite(value) || !Number.isInteger(value)) return null;
+    if (value < 0 || value > Number.MAX_SAFE_INTEGER) return null;
+    return value;
+  }
+  let s = String(value ?? "").trim();
+  if (s.startsWith("'")) {
+    s = s.slice(1).trim();
+  }
+  if (!/^\d+$/.test(s)) return null;
+  const n = Number(s);
+  return Number.isSafeInteger(n) ? n : null;
+}
+
+/**
+ * Amount in cents from the webhook (or a string). Strips Sheets-style leading `'`
+ * and optional thousands commas; must be a safe integer (negative allowed for refunds).
+ */
+function parseAmountCentsInteger(value: unknown): number | null {
+  if (typeof value === "number") {
+    if (!Number.isFinite(value) || !Number.isInteger(value)) return null;
+    if (!Number.isSafeInteger(value)) return null;
+    return value;
+  }
+  let s = String(value ?? "").trim();
+  if (s.startsWith("'")) {
+    s = s.slice(1).trim();
+  }
+  s = s.replace(/,/g, "");
+  if (!/^-?\d+$/.test(s)) return null;
+  const n = Number(s);
+  return Number.isSafeInteger(n) ? n : null;
 }
 
 function toA1Column(index1Based: number): string {
