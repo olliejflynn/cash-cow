@@ -38,6 +38,8 @@ export class SheetsService {
   private salesLogSheetName: string = "Sales_Log";
   private ticketRulesSheetName: string = "Ticket_rules";
   private squarePaymentsSheetName: string = "Square_payments";
+  /** Prevent same payment_id from being inserted concurrently in this process. */
+  private readonly pendingSquarePaymentIds = new Set<string>();
   private sellersSheetName: string = "Sellers";
   private usersSheetName: string = "users";
 
@@ -196,38 +198,69 @@ export class SheetsService {
   async appendSquarePaymentRows(rows: SquarePaymentRow[]): Promise<void> {
     if (rows.length === 0) return;
 
-    const client = await this.getSheetsClient();
-    const existingIdsResponse = await client.spreadsheets.values.get({
-      spreadsheetId: this.spreadsheetId,
-      range: `${this.squarePaymentsSheetName}!A:A`,
-    });
-    const existingIds = new Set(
-      (existingIdsResponse.data.values ?? [])
-        .map((row) => (Array.isArray(row) ? String(row[0] ?? "").trim() : ""))
-        .filter((id) => id !== "")
-    );
+    // payment_id is the logical primary key; skip blank IDs and duplicates in input.
+    const seenInInput = new Set<string>();
+    const normalizedRows: SquarePaymentRow[] = [];
+    for (const row of rows) {
+      const paymentId = String(row.payment_id ?? "").trim();
+      if (paymentId === "") continue;
+      if (seenInInput.has(paymentId)) continue;
+      seenInInput.add(paymentId);
+      normalizedRows.push({
+        ...row,
+        payment_id: paymentId,
+      });
+    }
+    if (normalizedRows.length === 0) return;
 
-    const uniqueRows = rows.filter((row) => {
-      const id = String(row.payment_id ?? "").trim();
-      if (id === "") return true;
-      if (existingIds.has(id)) return false;
-      existingIds.add(id);
+    // Simple process-local lock to avoid duplicate appends from concurrent webhooks.
+    const lockedIds: string[] = [];
+    const unlockedRows = normalizedRows.filter((row) => {
+      const paymentId = row.payment_id;
+      if (this.pendingSquarePaymentIds.has(paymentId)) return false;
+      this.pendingSquarePaymentIds.add(paymentId);
+      lockedIds.push(paymentId);
       return true;
     });
+    if (unlockedRows.length === 0) return;
 
-    if (uniqueRows.length === 0) return;
+    try {
+      const client = await this.getSheetsClient();
+      const existingIdsResponse = await client.spreadsheets.values.get({
+        spreadsheetId: this.spreadsheetId,
+        range: `${this.squarePaymentsSheetName}!A:A`,
+      });
+      const existingIds = new Set(
+        (existingIdsResponse.data.values ?? [])
+          .map((row) => (Array.isArray(row) ? String(row[0] ?? "").trim() : ""))
+          .filter((id) => id !== "")
+      );
 
-    const values = uniqueRows.map((row) =>
-      SQUARE_PAYMENT_COLUMNS.map((key) => row[key] ?? "")
-    );
+      const uniqueRows = unlockedRows.filter((row) => {
+        const id = row.payment_id;
+        if (existingIds.has(id)) return false;
+        existingIds.add(id);
+        return true;
+      });
 
-    await client.spreadsheets.values.append({
-      spreadsheetId: this.spreadsheetId,
-      range: `${this.squarePaymentsSheetName}!A:F`,
-      valueInputOption: "USER_ENTERED",
-      insertDataOption: "INSERT_ROWS",
-      requestBody: { values },
-    });
+      if (uniqueRows.length === 0) return;
+
+      const values = uniqueRows.map((row) =>
+        SQUARE_PAYMENT_COLUMNS.map((key) => row[key] ?? "")
+      );
+
+      await client.spreadsheets.values.append({
+        spreadsheetId: this.spreadsheetId,
+        range: `${this.squarePaymentsSheetName}!A:F`,
+        valueInputOption: "RAW",
+        insertDataOption: "INSERT_ROWS",
+        requestBody: { values },
+      });
+    } finally {
+      for (const id of lockedIds) {
+        this.pendingSquarePaymentIds.delete(id);
+      }
+    }
   }
 
   async squarePaymentIdExists(paymentId: string): Promise<boolean> {
@@ -243,7 +276,7 @@ export class SheetsService {
     const values = response.data.values ?? [];
     return values.some((row) => {
       const cell = Array.isArray(row) ? row[0] : undefined;
-      return typeof cell === "string" && cell.trim() === normalized;
+      return String(cell ?? "").trim() === normalized;
     });
   }
 
