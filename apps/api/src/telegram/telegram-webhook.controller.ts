@@ -1,18 +1,19 @@
 import {
   Body,
   Controller,
-  Headers,
   HttpCode,
   Post,
+  Req,
   UnauthorizedException,
 } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
+import type { Request } from "express";
 
 const HELP_REPLY =
   "This will display a list of commands.";
 
-/** Telegram sends this header when setWebhook was called with secret_token. */
-const TELEGRAM_SECRET_HEADER = "x-telegram-bot-api-secret-token";
+/** Telegram sends this when setWebhook included secret_token (name is case-insensitive). */
+const TELEGRAM_SECRET_HEADER = "X-Telegram-Bot-Api-Secret-Token";
 
 @Controller("telegram")
 export class TelegramWebhookController {
@@ -21,14 +22,21 @@ export class TelegramWebhookController {
   @Post("webhook")
   @HttpCode(200)
   async handleWebhook(
-    @Headers(TELEGRAM_SECRET_HEADER) secretHeader: string | undefined,
+    @Req() req: Request,
     @Body() body: unknown
   ): Promise<{ ok: boolean }> {
     const expectedSecret =
       this.config.get<string>("telegramWebhookSecret")?.trim() ?? "";
     if (expectedSecret !== "") {
-      const got = (secretHeader ?? "").trim();
+      // Express req.get() matches headers case-insensitively (more reliable than @Headers lowercased key alone).
+      const got = (req.get(TELEGRAM_SECRET_HEADER) ?? "").trim();
       if (got !== expectedSecret) {
+        console.warn(
+          "[TelegramWebhook] 401: webhook secret mismatch or missing header. " +
+            "If TELEGRAM_WEBHOOK_SECRET is set, call setWebhook with the same secret_token, " +
+            "or unset TELEGRAM_WEBHOOK_SECRET to disable verification.",
+          JSON.stringify({ header_present: got !== "" })
+        );
         throw new UnauthorizedException();
       }
     }
