@@ -41,4 +41,7 @@ export const config = () => ({
   ).trim(),
   usersSheetName: (process.env.USERS_SHEET_NAME ?? "users").trim(),
   usersSheetSyncSecret: (process.env.USERS_SHEET_SYNC_SECRET ?? "").trim(),
+  telegramBotToken: (process.env.TELEGRAM_BOT_TOKEN ?? "").trim(),
+  /** If set, webhook requests must send X-Telegram-Bot-Api-Secret-Token matching this value. */
+  telegramWebhookSecret: (process.env.TELEGRAM_WEBHOOK_SECRET ?? "").trim(),
 });
