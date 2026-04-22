@@ -22,7 +22,7 @@ export class WooUsersSheetSyncService {
 
   /**
    * Pull WordPress users via REST, merge Square team IDs by email, replace the Users sheet.
-   * If WordPress REST env is incomplete, logs and returns without throwing (safe for CI builds).
+   * If WordPress REST env is incomplete, returns without throwing (safe for CI builds).
    */
   async run(): Promise<{
     ok: boolean;
@@ -41,9 +41,6 @@ export class WooUsersSheetSyncService {
     ).trim();
 
     if (!site || !wpUser || !wpAppPassword) {
-      console.warn(
-        "[UsersSheetSync] Skipping: set WORDPRESS_REST_USERNAME, WORDPRESS_REST_APPLICATION_PASSWORD, and WORDPRESS_SITE_URL (or WOOCOMMERCE_SITE_URL as the same site base URL)"
-      );
       return {
         ok: true,
         skipped: true,
@@ -56,36 +53,18 @@ export class WooUsersSheetSyncService {
 
     let teamIdByEmail = new Map<string, string>();
     let squareFetched = 0;
+    let squareStaff: Array<{ teamId: string; email: string }> = [];
     try {
-      const { teamIdByEmail: map, fetchedTeamMembers } =
+      const { teamIdByEmail: map, fetchedTeamMembers, staffInOrder } =
         await this.squareOAuthService.fetchTeamMemberIdByEmailMap();
       teamIdByEmail = map;
       squareFetched = fetchedTeamMembers;
-      console.log(
-        "[UsersSheetSync] Square team-member map loaded",
-        JSON.stringify({
-          square_team_member_rows: fetchedTeamMembers,
-          distinct_emails_with_team_id: map.size,
-        })
-      );
-    } catch (err) {
-      console.warn(
-        "[UsersSheetSync] Square team member list unavailable (continuing without Square_team_ID):",
-        err instanceof Error ? err.message : err
-      );
+      squareStaff = staffInOrder;
+    } catch {
+      // Keep sync non-fatal if Square list is unavailable.
     }
 
     const users = await this.fetchAllWordPressUsers(site, wpUser, wpAppPassword);
-    console.log(
-      "[UsersSheetSync] WordPress users API finished",
-      JSON.stringify({
-        total_users: users.length,
-        sample_ids: users.slice(0, 5).map((u) => u.id),
-        sample_emails_present: users
-          .slice(0, 3)
-          .map((u) => ((u.email ?? "").trim() !== "" ? "yes" : "no")),
-      })
-    );
 
     const rows = users.map((u) => {
       const email = (u.email ?? "").trim();
@@ -104,36 +83,15 @@ export class WooUsersSheetSyncService {
     });
 
     const rowsWithSquareTeamId = rows.filter((r) => r.square_team_id !== "").length;
-    const emailToSquareIdPairs = rows
-      .filter((r) => r.email.trim() !== "")
+    const squareEmailTeamIdPairs = squareStaff
       .map((r) => ({
         email: r.email,
-        square_team_id: r.square_team_id || "(none)",
+        square_team_id: r.teamId,
       }));
 
-    console.log(
-      `[UsersSheetSync] Email -> Square team ID verification list (${emailToSquareIdPairs.length} rows)`
-    );
-    console.table(emailToSquareIdPairs);
+    console.table(squareEmailTeamIdPairs);
 
-    console.log(
-      "[UsersSheetSync] About to write Google Sheet",
-      JSON.stringify({
-        data_rows: rows.length,
-        rows_with_square_team_id: rowsWithSquareTeamId,
-        sample_row: rows[0] ?? null,
-      })
-    );
     await this.sheetsService.replaceUsersSheetRows(rows);
-
-    console.log(
-      "[UsersSheetSync] Google Sheet replace completed",
-      JSON.stringify({
-        data_rows: rows.length,
-        rows_with_square_team_id: rowsWithSquareTeamId,
-        square_team_member_rows: squareFetched,
-      })
-    );
 
     return {
       ok: true,
@@ -170,23 +128,8 @@ export class WooUsersSheetSyncService {
         },
       });
 
-      const contentType = (res.headers.get("content-type") ?? "").toLowerCase();
-      console.log(
-        "[UsersSheetSync] WordPress GET /wp/v2/users response",
-        JSON.stringify({
-          page,
-          per_page: perPage,
-          http_status: res.status,
-          content_type: contentType.slice(0, 80),
-        })
-      );
-
       if (!res.ok) {
         const text = await res.text();
-        console.error(
-          "[UsersSheetSync] WordPress error body (truncated)",
-          text.slice(0, 800)
-        );
         throw new Error(
           `WordPress users fetch failed (${res.status}): ${text.slice(0, 500)}`
         );
@@ -194,27 +137,11 @@ export class WooUsersSheetSyncService {
 
       const raw = await res.json();
       if (!Array.isArray(raw)) {
-        console.error(
-          "[UsersSheetSync] WordPress returned non-array JSON; type=",
-          typeof raw,
-          "keys=",
-          raw && typeof raw === "object"
-            ? Object.keys(raw as object).slice(0, 20)
-            : []
-        );
         throw new Error(
           "WordPress users response was not a JSON array (check REST URL, user capabilities, and application password)"
         );
       }
       const batch = raw as WpRestUser[];
-      console.log(
-        "[UsersSheetSync] WordPress users page parsed",
-        JSON.stringify({
-          page,
-          batch_length: batch.length,
-          running_total_after_page: all.length + batch.length,
-        })
-      );
       if (batch.length === 0) break;
       all.push(...batch);
       if (batch.length < perPage) break;

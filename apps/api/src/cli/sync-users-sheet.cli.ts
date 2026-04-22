@@ -10,12 +10,7 @@ async function main(): Promise<void> {
   });
   try {
     const sync = app.get(WooUsersSheetSyncService);
-    const result = await sync.run();
-    if (result.skipped) {
-      console.log("[sync-users-sheet.cli] Skipped:", result.reason ?? "unknown");
-    } else {
-      console.log("[sync-users-sheet.cli] Done:", JSON.stringify(result));
-    }
+    await sync.run();
   } finally {
     await app.close();
     await disconnect();
