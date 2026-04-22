@@ -18,6 +18,10 @@ export const config = () => ({
   ticketRulesSheetName: process.env.TICKET_RULES_SHEET_NAME ?? "Ticket_rules",
   squarePaymentsSheetName:
     process.env.SQUARE_PAYMENTS_SHEET_NAME ?? "Square_payments",
+  /** Telegram /all: L cash-in tab (column A seller id; C hand in, D card, E cash in). */
+  lCashInSheetName: (process.env.L_CASH_IN_SHEET_NAME ?? "L CASH IN 🍻").trim(),
+  /** Telegram /all: M cash-in tab (same columns as L). */
+  mCashInSheetName: (process.env.M_CASH_IN_SHEET_NAME ?? "M CASH IN 👑").trim(),
   defaultHandInPercent: parseFloat(
     process.env.DEFAULT_HAND_IN_PERCENT ?? "100"
   ),

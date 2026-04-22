@@ -31,6 +31,23 @@ const SQUARE_PAYMENT_COLUMNS: (keyof SquarePaymentRow)[] = [
   "status",
 ];
 
+/** One tab’s aggregates for a seller (L or M cash-in sheet). */
+export type CashInTabAggregate = {
+  sumC: number;
+  sumD: number;
+  sumE: number;
+  /** Hand in total − card amount (= sumC − sumD). */
+  cashIn: number;
+};
+
+/** Per-seller cash in from L + M tabs (final total = L.cashIn + M.cashIn). */
+export type SellerCashInRow = {
+  sellerId: string;
+  l: CashInTabAggregate;
+  m: CashInTabAggregate;
+  finalTotal: number;
+};
+
 @Injectable()
 export class SheetsService {
   private sheets: sheets_v4.Sheets | null = null;
@@ -42,6 +59,8 @@ export class SheetsService {
   private readonly pendingSquarePaymentIds = new Set<string>();
   private sellersSheetName: string = "Sellers";
   private usersSheetName: string = "users";
+  private lCashInSheetName: string = "L CASH IN 🍻";
+  private mCashInSheetName: string = "M CASH IN 👑";
 
   constructor(private readonly config: ConfigService) {
     this.spreadsheetId = this.config.get<string>("spreadsheetId") ?? "";
@@ -53,6 +72,10 @@ export class SheetsService {
       this.config.get<string>("squarePaymentsSheetName") ?? "Square_payments";
     this.sellersSheetName = "Sellers";
     this.usersSheetName = this.config.get<string>("usersSheetName") ?? "users";
+    this.lCashInSheetName =
+      this.config.get<string>("lCashInSheetName") ?? "L CASH IN 🍻";
+    this.mCashInSheetName =
+      this.config.get<string>("mCashInSheetName") ?? "M CASH IN 👑";
   }
 
   private async getSheetsClient(): Promise<sheets_v4.Sheets> {
@@ -418,6 +441,97 @@ export class SheetsService {
   }
 
   /**
+   * Read L + M cash-in tabs (A:E), aggregate per seller id (column A).
+   * Per tab: cashIn = sum(hand in, C) − sum(card, D). Final total = L.cashIn + M.cashIn.
+   */
+  async getAllSellersCashInFromSheets(): Promise<SellerCashInRow[]> {
+    const client = await this.getSheetsClient();
+    const spreadsheetId = this.spreadsheetId.trim();
+    if (spreadsheetId === "") {
+      throw new Error("SPREADSHEET_ID is not set");
+    }
+
+    const titleL = await this.resolveSheetTitleForConfiguredTab(
+      client,
+      spreadsheetId,
+      this.lCashInSheetName
+    );
+    const titleM = await this.resolveSheetTitleForConfiguredTab(
+      client,
+      spreadsheetId,
+      this.mCashInSheetName
+    );
+
+    const rangeL = `${a1SheetRangePrefix(titleL)}A:E`;
+    const rangeM = `${a1SheetRangePrefix(titleM)}A:E`;
+
+    const batch = await client.spreadsheets.values.batchGet({
+      spreadsheetId,
+      ranges: [rangeL, rangeM],
+    });
+
+    const valueRanges = batch.data.valueRanges ?? [];
+    const rowsL = valueRanges[0]?.values ?? [];
+    const rowsM = valueRanges[1]?.values ?? [];
+
+    const mapL = aggregateCashInRowsBySeller(rowsL as unknown[][]);
+    const mapM = aggregateCashInRowsBySeller(rowsM as unknown[][]);
+
+    const sellerIds = new Set<string>([...mapL.keys(), ...mapM.keys()]);
+    const out: SellerCashInRow[] = [];
+    for (const sellerId of sellerIds) {
+      const lAgg = mapL.get(sellerId) ?? { sumC: 0, sumD: 0, sumE: 0 };
+      const mAgg = mapM.get(sellerId) ?? { sumC: 0, sumD: 0, sumE: 0 };
+      const lCashIn = lAgg.sumC - lAgg.sumD;
+      const mCashIn = mAgg.sumC - mAgg.sumD;
+      out.push({
+        sellerId,
+        l: {
+          sumC: lAgg.sumC,
+          sumD: lAgg.sumD,
+          sumE: lAgg.sumE,
+          cashIn: lCashIn,
+        },
+        m: {
+          sumC: mAgg.sumC,
+          sumD: mAgg.sumD,
+          sumE: mAgg.sumE,
+          cashIn: mCashIn,
+        },
+        finalTotal: lCashIn + mCashIn,
+      });
+    }
+    return out;
+  }
+
+  private async resolveSheetTitleForConfiguredTab(
+    client: sheets_v4.Sheets,
+    spreadsheetId: string,
+    configuredName: string
+  ): Promise<string> {
+    const wanted = configuredName.trim();
+    if (wanted === "") {
+      throw new Error("Cash-in sheet name is empty");
+    }
+    const meta = await client.spreadsheets.get({
+      spreadsheetId,
+      fields: "sheets.properties",
+    });
+    const sheetsList = meta.data.sheets ?? [];
+    const wantedLower = wanted.toLowerCase();
+    const found =
+      sheetsList
+        .map((s) => s.properties?.title)
+        .find((t) => t != null && t.trim().toLowerCase() === wantedLower) ?? null;
+    if (found == null) {
+      throw new Error(
+        `Cash-in sheet tab not found: "${wanted}". Check L_CASH_IN_SHEET_NAME / M_CASH_IN_SHEET_NAME.`
+      );
+    }
+    return found;
+  }
+
+  /**
    * Replace the Users tab with header row + data. Headers:
    * user_id, first_name, last_name, email, Square_team_ID
    */
@@ -546,6 +660,40 @@ export class SheetsService {
       })
     );
   }
+}
+
+function aggregateCashInRowsBySeller(
+  rows: unknown[][]
+): Map<string, { sumC: number; sumD: number; sumE: number }> {
+  const map = new Map<string, { sumC: number; sumD: number; sumE: number }>();
+  for (const row of rows) {
+    const sellerId = String(row[0] ?? "").trim();
+    if (sellerId === "") continue;
+    const c = parseSheetMoneyNumber(row[2]);
+    const d = parseSheetMoneyNumber(row[3]);
+    const e = parseSheetMoneyNumber(row[4]);
+    const cur = map.get(sellerId) ?? { sumC: 0, sumD: 0, sumE: 0 };
+    cur.sumC += c;
+    cur.sumD += d;
+    cur.sumE += e;
+    map.set(sellerId, cur);
+  }
+  return map;
+}
+
+/** Hand in / card / cash-in cells: commas, optional £, Sheets leading apostrophe. */
+function parseSheetMoneyNumber(value: unknown): number {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  let s = String(value ?? "").trim();
+  if (s.startsWith("'")) {
+    s = s.slice(1).trim();
+  }
+  s = s.replace(/,/g, "").replace(/£/g, "").replace(/\s/g, "");
+  if (s === "") return 0;
+  const n = parseFloat(s);
+  return Number.isFinite(n) ? n : 0;
 }
 
 /**
