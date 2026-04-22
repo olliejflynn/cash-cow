@@ -59,22 +59,29 @@ export class WooUsersSheetSyncService {
     let mTeamIdByEmail = new Map<string, string>();
     let squareFetched = 0;
     let mSquareFetched = 0;
+    let primaryStaffInOrder: Array<{ teamId: string; email: string }> = [];
+    let mStaffInOrder: Array<{ teamId: string; email: string }> = [];
     try {
-      const { teamIdByEmail, fetchedTeamMembers } =
+      const { teamIdByEmail, fetchedTeamMembers, staffInOrder } =
         await this.squareOAuthService.fetchTeamMemberIdByEmailMap("primary");
       primaryTeamIdByEmail = teamIdByEmail;
       squareFetched = fetchedTeamMembers;
+      primaryStaffInOrder = staffInOrder;
     } catch {
       // Keep sync non-fatal if Square list is unavailable.
     }
     try {
-      const { teamIdByEmail, fetchedTeamMembers } =
+      const { teamIdByEmail, fetchedTeamMembers, staffInOrder } =
         await this.squareOAuthService.fetchTeamMemberIdByEmailMap("m");
       mTeamIdByEmail = teamIdByEmail;
       mSquareFetched = fetchedTeamMembers;
+      mStaffInOrder = staffInOrder;
     } catch {
       // Keep sync non-fatal if M Square list is unavailable.
     }
+
+    this.printSquareAccountTeamIds("primary", primaryStaffInOrder);
+    this.printSquareAccountTeamIds("m", mStaffInOrder);
 
     const users = await this.fetchAllWordPressUsers(site, wpUser, wpAppPassword);
 
@@ -164,5 +171,22 @@ export class WooUsersSheetSyncService {
     }
 
     return all;
+  }
+
+  private printSquareAccountTeamIds(
+    accountKey: "primary" | "m",
+    staffInOrder: Array<{ teamId: string; email: string }>
+  ): void {
+    const rows = staffInOrder.map((staff) => ({
+      square_account: accountKey,
+      team_id: staff.teamId,
+      email: staff.email,
+    }));
+    console.log(
+      `[UsersSheetSync] Square staff listing (${accountKey}): ${rows.length} row(s)`
+    );
+    if (rows.length > 0) {
+      console.table(rows);
+    }
   }
 }
