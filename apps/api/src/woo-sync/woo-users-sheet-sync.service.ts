@@ -104,6 +104,17 @@ export class WooUsersSheetSyncService {
     });
 
     const rowsWithSquareTeamId = rows.filter((r) => r.square_team_id !== "").length;
+    const emailToSquareIdPairs = rows
+      .filter((r) => r.email.trim() !== "")
+      .map((r) => ({
+        email: r.email,
+        square_team_id: r.square_team_id || "(none)",
+      }));
+
+    console.log(
+      `[UsersSheetSync] Email -> Square team ID verification list (${emailToSquareIdPairs.length} rows)`
+    );
+    console.table(emailToSquareIdPairs);
 
     console.log(
       "[UsersSheetSync] About to write Google Sheet",
