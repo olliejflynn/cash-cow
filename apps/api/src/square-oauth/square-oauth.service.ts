@@ -2,6 +2,7 @@ import { Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import {
   getLatestSquareOAuthCredential,
+  getSquareOAuthCredentialByMerchantId,
   upsertSquareOAuthCredential,
 } from "@cash-cow/database";
 import { SheetsService } from "../sheets/sheets.service";
@@ -9,6 +10,7 @@ import { createSignedOAuthState, verifySignedOAuthState } from "./oauth-state";
 import { decryptTokenPayload, encryptTokenPayload } from "./token-crypto";
 
 type SquareEnvironment = "sandbox" | "production";
+export type SquareMerchantKey = "primary" | "m";
 
 interface ObtainTokenResponse {
   access_token?: string;
@@ -48,17 +50,41 @@ export class SquareOAuthService {
       : "https://connect.squareupsandbox.com";
   }
 
-  private async getStoredAccessToken(): Promise<string> {
+  private requireMerchantId(merchantKey: SquareMerchantKey): string {
+    const envKey =
+      merchantKey === "primary" ? "squarePrimaryMerchantId" : "squareMMerchantId";
+    const envName =
+      merchantKey === "primary"
+        ? "SQUARE_PRIMARY_MERCHANT_ID"
+        : "SQUARE_M_MERCHANT_ID";
+    const merchantId = (this.config.get<string>(envKey) ?? "").trim();
+    if (merchantId === "") {
+      throw new Error(`${envName} is not set`);
+    }
+    return merchantId;
+  }
+
+  private async getStoredAccessToken(
+    merchantKey: SquareMerchantKey = "primary"
+  ): Promise<string> {
     const cfg = this.requireOAuthConfig();
-    const latest = await getLatestSquareOAuthCredential(this.getEnvironment());
-    if (!latest) {
+    const env = this.getEnvironment();
+    let credential = null;
+    try {
+      const merchantId = this.requireMerchantId(merchantKey);
+      credential = await getSquareOAuthCredentialByMerchantId(env, merchantId);
+    } catch {
+      // Keep backward compatibility where merchant IDs are not configured yet.
+      credential = await getLatestSquareOAuthCredential(env);
+    }
+    if (!credential) {
       throw new Error(
         "No stored Square OAuth credential found. Complete OAuth connect first."
       );
     }
     const payloadText = decryptTokenPayload(
       cfg.encryptionKey,
-      latest.tokenCiphertext
+      credential.tokenCiphertext
     );
     let payload: unknown;
     try {
@@ -187,12 +213,14 @@ export class SquareOAuthService {
   /**
    * Square team member id keyed by lowercase email (same mapping used for Sellers sheet sync).
    */
-  async fetchTeamMemberIdByEmailMap(): Promise<{
+  async fetchTeamMemberIdByEmailMap(
+    merchantKey: SquareMerchantKey = "primary"
+  ): Promise<{
     teamIdByEmail: Map<string, string>;
     fetchedTeamMembers: number;
     staffInOrder: Array<{ teamId: string; email: string }>;
   }> {
-    const accessToken = await this.getStoredAccessToken();
+    const accessToken = await this.getStoredAccessToken(merchantKey);
     const teamIdByEmail = new Map<string, string>();
     const staffInOrder: Array<{ teamId: string; email: string }> = [];
     let fetchedTeamMembers = 0;
@@ -253,6 +281,25 @@ export class SquareOAuthService {
     return { teamIdByEmail, fetchedTeamMembers, staffInOrder };
   }
 
+  async fetchTeamMemberEmailByIdMap(
+    merchantKey: SquareMerchantKey = "primary"
+  ): Promise<{
+    emailByTeamId: Map<string, string>;
+    fetchedTeamMembers: number;
+  }> {
+    const { staffInOrder, fetchedTeamMembers } =
+      await this.fetchTeamMemberIdByEmailMap(merchantKey);
+    const emailByTeamId = new Map<string, string>();
+    for (const row of staffInOrder) {
+      const teamId = row.teamId.trim();
+      const email = row.email.trim().toLowerCase();
+      if (teamId === "" || teamId === "(no team id)") continue;
+      if (email === "" || email === "(no email)") continue;
+      emailByTeamId.set(teamId, email);
+    }
+    return { emailByTeamId, fetchedTeamMembers };
+  }
+
   async syncSellerSquareTeamIds(): Promise<{
     fetchedTeamMembers: number;
     mappedByEmail: number;
@@ -281,6 +328,22 @@ export class SquareOAuthService {
 
     const updatedSellers =
       await this.sheetsService.setSellerSquareTeamIdsByEmail(teamIdByEmail);
+    return {
+      fetchedTeamMembers,
+      mappedByEmail: teamIdByEmail.size,
+      updatedSellers,
+    };
+  }
+
+  async syncSellerMSquareTeamIds(): Promise<{
+    fetchedTeamMembers: number;
+    mappedByEmail: number;
+    updatedSellers: number;
+  }> {
+    const { teamIdByEmail, fetchedTeamMembers } =
+      await this.fetchTeamMemberIdByEmailMap("m");
+    const updatedSellers =
+      await this.sheetsService.setSellerMSquareTeamIdsByEmail(teamIdByEmail);
     return {
       fetchedTeamMembers,
       mappedByEmail: teamIdByEmail.size,

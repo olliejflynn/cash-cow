@@ -1,16 +1,27 @@
 import { Body, Controller, HttpCode, Post } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
 import { SheetsService } from "../sheets/sheets.service";
+import { SquareOAuthService } from "../square-oauth/square-oauth.service";
 import type { SquarePaymentRow } from "./square-payment.types";
 
 @Controller("webhooks/square")
 export class SquareWebhookController {
-  constructor(private readonly sheetsService: SheetsService) {}
+  constructor(
+    private readonly sheetsService: SheetsService,
+    private readonly squareOAuthService: SquareOAuthService,
+    private readonly config: ConfigService
+  ) {}
 
   @Post("payment")
   @HttpCode(200)
   async handlePaymentWebhook(@Body() body: unknown): Promise<{ ok: boolean }> {
     const payload = isRecord(body) ? body : {};
     const payment = getPaymentObject(payload);
+    const merchantId = getMerchantId(payload, payment);
+    const primaryMerchantId = (
+      this.config.get<string>("squarePrimaryMerchantId") ?? ""
+    ).trim();
+    const mMerchantId = (this.config.get<string>("squareMMerchantId") ?? "").trim();
     const amount =
       getNumericField(getNestedRecord(payment, "amount_money"), "amount") ??
       getNumericField(getNestedRecord(payment, "total_money"), "amount");
@@ -36,14 +47,31 @@ export class SquareWebhookController {
       return { ok: true };
     }
 
-    const alreadyInSheet = await this.sheetsService.squarePaymentIdExists(paymentId);
+    const route = resolveMerchantRoute({
+      merchantId,
+      primaryMerchantId,
+      mMerchantId,
+    });
+    if (route === "unmapped") {
+      console.warn(
+        "[SquareWebhook] Skipping payload for unmapped merchant",
+        JSON.stringify({ merchant_id: merchantId, payment_id: paymentId })
+      );
+      return { ok: true };
+    }
+
+    const alreadyInSheet =
+      route === "primary"
+        ? await this.sheetsService.squarePaymentIdExists(paymentId)
+        : await this.sheetsService.mSquarePaymentIdExists(paymentId);
     if (alreadyInSheet) {
       return { ok: true };
     }
 
-    const sellerId = await this.sheetsService.getSellerIdBySquareTeamMemberId(
-      row.team_member
-    );
+    const sellerId =
+      route === "primary"
+        ? await this.sheetsService.getSellerIdBySquareTeamMemberId(row.team_member)
+        : await this.lookupSellerIdByMSquareTeamMemberId(row.team_member);
     if (sellerId == null) {
       return { ok: true };
     }
@@ -57,19 +85,65 @@ export class SquareWebhookController {
         seller_id: row.seller_id,
         amount_cents: row.amount_cents,
         status: row.status,
+        merchant_id: merchantId,
+        route,
       })
     );
 
-    await this.sheetsService.appendSquarePaymentRows([row]);
+    if (route === "primary") {
+      await this.sheetsService.appendSquarePaymentRows([row]);
+    } else {
+      await this.sheetsService.appendMSquarePaymentRows([row]);
+    }
 
     return { ok: true };
   }
+
+  private async lookupSellerIdByMSquareTeamMemberId(
+    teamMemberId: string
+  ): Promise<number | null> {
+    const { emailByTeamId } =
+      await this.squareOAuthService.fetchTeamMemberEmailByIdMap("m");
+    const sellerEmail = emailByTeamId.get(teamMemberId.trim()) ?? "";
+    if (sellerEmail === "") return null;
+    return this.sheetsService.getSellerIdByEmail(sellerEmail);
+  }
+}
+
+type SquareMerchantRoute = "primary" | "m" | "unmapped";
+
+function resolveMerchantRoute(input: {
+  merchantId: string;
+  primaryMerchantId: string;
+  mMerchantId: string;
+}): SquareMerchantRoute {
+  const merchantId = input.merchantId.trim();
+  if (merchantId === "") return "unmapped";
+  if (input.primaryMerchantId !== "" && merchantId === input.primaryMerchantId) {
+    return "primary";
+  }
+  if (input.mMerchantId !== "" && merchantId === input.mMerchantId) {
+    return "m";
+  }
+  return "unmapped";
 }
 
 function getPaymentObject(payload: Record<string, unknown>): Record<string, unknown> {
   const data = getNestedRecord(payload, "data");
   const object = getNestedRecord(data, "object");
   return getNestedRecord(object, "payment");
+}
+
+function getMerchantId(
+  payload: Record<string, unknown>,
+  payment: Record<string, unknown>
+): string {
+  const direct = (getStringField(payload, "merchant_id") ?? "").trim();
+  if (direct !== "") return direct;
+  const fromPayment = (getStringField(payment, "merchant_id") ?? "").trim();
+  if (fromPayment !== "") return fromPayment;
+  const fromData = (getStringField(getNestedRecord(payload, "data"), "merchant_id") ?? "").trim();
+  return fromData;
 }
 
 function getNestedRecord(

@@ -55,8 +55,9 @@ export class SheetsService {
   private salesLogSheetName: string = "Sales_Log";
   private ticketRulesSheetName: string = "Ticket_rules";
   private squarePaymentsSheetName: string = "Square_payments";
+  private mSquarePaymentsSheetName: string = "M Square_payments";
   /** Prevent same payment_id from being inserted concurrently in this process. */
-  private readonly pendingSquarePaymentIds = new Set<string>();
+  private readonly pendingSquarePaymentKeys = new Set<string>();
   private sellersSheetName: string = "Sellers";
   private usersSheetName: string = "users";
   private lCashInSheetName: string = "L CASH IN 🍻";
@@ -70,6 +71,8 @@ export class SheetsService {
       this.config.get<string>("ticketRulesSheetName") ?? "Ticket_rules";
     this.squarePaymentsSheetName =
       this.config.get<string>("squarePaymentsSheetName") ?? "Square_payments";
+    this.mSquarePaymentsSheetName =
+      this.config.get<string>("mSquarePaymentsSheetName") ?? "M Square_payments";
     this.sellersSheetName = "Sellers";
     this.usersSheetName = this.config.get<string>("usersSheetName") ?? "users";
     this.lCashInSheetName =
@@ -219,6 +222,22 @@ export class SheetsService {
    * Column order: Payment ID, Payment Time, Team Member, Seller ID, Amount (cents), Status.
    */
   async appendSquarePaymentRows(rows: SquarePaymentRow[]): Promise<void> {
+    await this.appendSquarePaymentRowsToSheet(rows, this.squarePaymentsSheetName, "primary");
+  }
+
+  /**
+   * Append M Square payment rows to the configured M spreadsheet tab.
+   * Column order: Payment ID, Payment Time, Team Member, Seller ID, Amount (cents), Status.
+   */
+  async appendMSquarePaymentRows(rows: SquarePaymentRow[]): Promise<void> {
+    await this.appendSquarePaymentRowsToSheet(rows, this.mSquarePaymentsSheetName, "m");
+  }
+
+  private async appendSquarePaymentRowsToSheet(
+    rows: SquarePaymentRow[],
+    sheetName: string,
+    paymentNamespace: "primary" | "m"
+  ): Promise<void> {
     if (rows.length === 0) return;
 
     // payment_id is the logical primary key; skip blank IDs and duplicates in input.
@@ -237,12 +256,13 @@ export class SheetsService {
     if (normalizedRows.length === 0) return;
 
     // Simple process-local lock to avoid duplicate appends from concurrent webhooks.
-    const lockedIds: string[] = [];
+    const lockedKeys: string[] = [];
     const unlockedRows = normalizedRows.filter((row) => {
       const paymentId = row.payment_id;
-      if (this.pendingSquarePaymentIds.has(paymentId)) return false;
-      this.pendingSquarePaymentIds.add(paymentId);
-      lockedIds.push(paymentId);
+      const pendingKey = `${paymentNamespace}:${paymentId}`;
+      if (this.pendingSquarePaymentKeys.has(pendingKey)) return false;
+      this.pendingSquarePaymentKeys.add(pendingKey);
+      lockedKeys.push(pendingKey);
       return true;
     });
     if (unlockedRows.length === 0) return;
@@ -251,7 +271,7 @@ export class SheetsService {
       const client = await this.getSheetsClient();
       const existingIdsResponse = await client.spreadsheets.values.get({
         spreadsheetId: this.spreadsheetId,
-        range: `${this.squarePaymentsSheetName}!A:A`,
+        range: `${sheetName}!A:A`,
       });
       const existingIds = new Set(
         (existingIdsResponse.data.values ?? [])
@@ -312,26 +332,37 @@ export class SheetsService {
 
       await client.spreadsheets.values.append({
         spreadsheetId: this.spreadsheetId,
-        range: `${this.squarePaymentsSheetName}!A:F`,
+        range: `${sheetName}!A:F`,
         valueInputOption: "RAW",
         insertDataOption: "INSERT_ROWS",
         requestBody: { values },
       });
     } finally {
-      for (const id of lockedIds) {
-        this.pendingSquarePaymentIds.delete(id);
+      for (const key of lockedKeys) {
+        this.pendingSquarePaymentKeys.delete(key);
       }
     }
   }
 
   async squarePaymentIdExists(paymentId: string): Promise<boolean> {
+    return this.squarePaymentIdExistsInSheet(paymentId, this.squarePaymentsSheetName);
+  }
+
+  async mSquarePaymentIdExists(paymentId: string): Promise<boolean> {
+    return this.squarePaymentIdExistsInSheet(paymentId, this.mSquarePaymentsSheetName);
+  }
+
+  private async squarePaymentIdExistsInSheet(
+    paymentId: string,
+    sheetName: string
+  ): Promise<boolean> {
     const normalized = paymentId.trim();
     if (normalized === "") return false;
 
     const client = await this.getSheetsClient();
     const response = await client.spreadsheets.values.get({
       spreadsheetId: this.spreadsheetId,
-      range: `${this.squarePaymentsSheetName}!A:A`,
+      range: `${sheetName}!A:A`,
     });
 
     const values = response.data.values ?? [];
@@ -380,11 +411,60 @@ export class SheetsService {
   }
 
   /**
+   * Sellers tab: match `email` to seller row and return `seller_id`.
+   */
+  async getSellerIdByEmail(email: string): Promise<number | null> {
+    const normalizedEmail = email.trim().toLowerCase();
+    if (normalizedEmail === "") return null;
+
+    const client = await this.getSheetsClient();
+    const response = await client.spreadsheets.values.get({
+      spreadsheetId: this.spreadsheetId,
+      range: `${this.sellersSheetName}!A:Z`,
+    });
+    const values = response.data.values ?? [];
+    if (values.length === 0) return null;
+
+    const header = values[0]?.map((v) => String(v).trim()) ?? [];
+    const normHeader = (h: string) => h.toLowerCase().replace(/\s+/g, "_");
+    const emailIdx = header.findIndex((h) => normHeader(h) === "email");
+    const sellerIdx = header.findIndex((h) => normHeader(h) === "seller_id");
+    if (emailIdx < 0 || sellerIdx < 0) {
+      throw new Error(`Sellers tab must include 'email' and 'seller_id' headers`);
+    }
+
+    for (let i = 1; i < values.length; i++) {
+      const row = values[i] ?? [];
+      const rowEmail = String(row[emailIdx] ?? "").trim().toLowerCase();
+      if (rowEmail !== normalizedEmail) continue;
+      return parseSellerIdInteger(row[sellerIdx]);
+    }
+    return null;
+  }
+
+  /**
    * For Sellers tab, set Square_team_ID using matching email values.
    * Rows with blank email are ignored.
    */
   async setSellerSquareTeamIdsByEmail(
     teamIdByEmail: Map<string, string>
+  ): Promise<number> {
+    return this.setSellerTeamIdsByEmailForColumn(teamIdByEmail, "Square_team_ID");
+  }
+
+  /**
+   * For Sellers tab, set M Square_team_ID using matching email values.
+   * Rows with blank email are ignored.
+   */
+  async setSellerMSquareTeamIdsByEmail(
+    teamIdByEmail: Map<string, string>
+  ): Promise<number> {
+    return this.setSellerTeamIdsByEmailForColumn(teamIdByEmail, "M Square_team_ID");
+  }
+
+  private async setSellerTeamIdsByEmailForColumn(
+    teamIdByEmail: Map<string, string>,
+    teamColumnName: string
   ): Promise<number> {
     if (teamIdByEmail.size === 0) return 0;
 
@@ -397,13 +477,14 @@ export class SheetsService {
     if (values.length === 0) return 0;
 
     const header = values[0]?.map((v) => String(v).trim()) ?? [];
-    const emailIdx = header.findIndex((v) => v.toLowerCase() === "email");
+    const normHeader = (h: string) => h.toLowerCase().replace(/\s+/g, "_");
+    const emailIdx = header.findIndex((v) => normHeader(v) === "email");
     const teamIdIdx = header.findIndex(
-      (v) => v.toLowerCase() === "square_team_id"
+      (v) => normHeader(v) === normHeader(teamColumnName)
     );
     if (emailIdx < 0 || teamIdIdx < 0) {
       throw new Error(
-        `Sellers tab is missing required headers 'email' or 'Square_team_ID'`
+        `Sellers tab is missing required headers 'email' or '${teamColumnName}'`
       );
     }
 
@@ -533,7 +614,7 @@ export class SheetsService {
 
   /**
    * Replace the Users tab with header row + data. Headers:
-   * user_id, first_name, last_name, email, Square_team_ID
+   * user_id, first_name, last_name, email, Square_team_ID, M Square_team_ID
    */
   async replaceUsersSheetRows(
     rows: Array<{
@@ -542,6 +623,7 @@ export class SheetsService {
       last_name: string;
       email: string;
       square_team_id: string;
+      m_square_team_id: string;
     }>
   ): Promise<void> {
     const client = await this.getSheetsClient();
@@ -623,6 +705,7 @@ export class SheetsService {
       "last_name",
       "email",
       "Square_team_ID",
+      "M Square_team_ID",
     ];
     const dataRows = rows.map((r) => [
       r.user_id,
@@ -630,10 +713,11 @@ export class SheetsService {
       r.last_name,
       r.email,
       r.square_team_id,
+      r.m_square_team_id,
     ]);
     const values = [headers, ...dataRows];
 
-    const clearRange = `${rangePrefix}A:E`;
+    const clearRange = `${rangePrefix}A:F`;
     await client.spreadsheets.values.clear({
       spreadsheetId,
       range: clearRange,
@@ -643,7 +727,7 @@ export class SheetsService {
       JSON.stringify({ range: clearRange })
     );
 
-    const updateRange = `${rangePrefix}A1:E${values.length}`;
+    const updateRange = `${rangePrefix}A1:F${values.length}`;
     const updateRes = await client.spreadsheets.values.update({
       spreadsheetId,
       range: updateRange,

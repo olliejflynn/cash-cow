@@ -18,6 +18,8 @@ export const config = () => ({
   ticketRulesSheetName: process.env.TICKET_RULES_SHEET_NAME ?? "Ticket_rules",
   squarePaymentsSheetName:
     process.env.SQUARE_PAYMENTS_SHEET_NAME ?? "Square_payments",
+  mSquarePaymentsSheetName:
+    process.env.M_SQUARE_PAYMENTS_SHEET_NAME ?? "M Square_payments",
   /** Telegram /all: L cash-in tab (column A seller id; C hand in, D card, E cash in). */
   lCashInSheetName: (process.env.L_CASH_IN_SHEET_NAME ?? "L CASH IN 🍻").trim(),
   /** Telegram /all: M cash-in tab (same columns as L). */
@@ -33,6 +35,8 @@ export const config = () => ({
   squareOAuthScopes: process.env.SQUARE_OAUTH_SCOPES ?? "",
   squareTokenEncryptionKey: process.env.SQUARE_TOKEN_ENCRYPTION_KEY ?? "",
   squareOAuthSetupSecret: process.env.SQUARE_OAUTH_SETUP_SECRET ?? "",
+  squarePrimaryMerchantId: (process.env.SQUARE_PRIMARY_MERCHANT_ID ?? "").trim(),
+  squareMMerchantId: (process.env.SQUARE_M_MERCHANT_ID ?? "").trim(),
   /** WordPress site base URL for REST (users sync). WORDPRESS_SITE_URL overrides WOOCOMMERCE_SITE_URL. */
   wordpressRestSiteUrl: (
     process.env.WORDPRESS_SITE_URL ??

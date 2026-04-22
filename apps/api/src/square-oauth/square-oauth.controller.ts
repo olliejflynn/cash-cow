@@ -89,6 +89,29 @@ export class SquareOAuthController {
     }
   }
 
+  @Post("sync-sellers-team-ids-m")
+  async syncSellersTeamIdsM(
+    @Headers("authorization") authorization?: string
+  ): Promise<{
+    ok: boolean;
+    fetchedTeamMembers: number;
+    mappedByEmail: number;
+    updatedSellers: number;
+  }> {
+    this.assertSetupAuthorized(authorization);
+    try {
+      const result = await this.squareOAuth.syncSellerMSquareTeamIds();
+      return {
+        ok: true,
+        ...result,
+      };
+    } catch (e: unknown) {
+      const message =
+        e instanceof Error ? e.message : "Failed to sync seller M team IDs";
+      throw new BadRequestException(message);
+    }
+  }
+
   private assertSetupAuthorized(authorization: string | undefined): void {
     const setupSecret = (this.config.get<string>("squareOAuthSetupSecret") ?? "").trim();
     if (setupSecret === "") {
