@@ -188,11 +188,20 @@ function formatSingleSellerBalance(row: SellerCashInRow): string {
 function formatAllBalancesTable(rows: SellerCashInRow[]): string {
   const items = rows
     .map((row) => {
-      const code = truncateSellerCode(row.sellerId);
+      const normalizedCode = normalizeSellerCode(row.sellerId);
       const total = row.l.sumE + row.m.sumE;
-      return { code, total };
+      return { normalizedCode, total };
     })
+    .filter((item) => item.normalizedCode !== "")
+    .map((item) => ({
+      code: truncateSellerCode(item.normalizedCode),
+      total: item.total,
+    }))
     .sort((a, b) => b.total - a.total);
+
+  if (items.length === 0) {
+    return "No sellers with valid seller codes were found.";
+  }
 
   const codeWidth = 4;
   const amountWidth = Math.max(
@@ -213,9 +222,8 @@ function formatAllBalancesTable(rows: SellerCashInRow[]): string {
   return lines.join("\n");
 }
 
-function truncateSellerCode(sellerId: string): string {
-  const digits = normalizeSellerCode(sellerId);
-  return digits.slice(0, 4).padEnd(4, " ");
+function truncateSellerCode(normalizedSellerCode: string): string {
+  return normalizedSellerCode.slice(0, 4).padEnd(4, " ");
 }
 
 function normalizeSellerCode(value: string): string {
