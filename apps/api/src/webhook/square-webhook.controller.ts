@@ -1,14 +1,12 @@
 import { Body, Controller, HttpCode, Post } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { SheetsService } from "../sheets/sheets.service";
-import { SquareOAuthService } from "../square-oauth/square-oauth.service";
 import type { SquarePaymentRow } from "./square-payment.types";
 
 @Controller("webhooks/square")
 export class SquareWebhookController {
   constructor(
     private readonly sheetsService: SheetsService,
-    private readonly squareOAuthService: SquareOAuthService,
     private readonly config: ConfigService
   ) {}
 
@@ -70,8 +68,14 @@ export class SquareWebhookController {
 
     const sellerId =
       route === "primary"
-        ? await this.sheetsService.getSellerIdBySquareTeamMemberId(row.team_member)
-        : await this.lookupSellerIdByMSquareTeamMemberId(row.team_member);
+        ? await this.sheetsService.getSellerIdFromSquareIdsByTeamMember(
+            row.team_member,
+            "Square_team_ID"
+          )
+        : await this.sheetsService.getSellerIdFromSquareIdsByTeamMember(
+            row.team_member,
+            "M Square_team_ID"
+          );
     if (sellerId == null) {
       return { ok: true };
     }
@@ -97,16 +101,6 @@ export class SquareWebhookController {
     }
 
     return { ok: true };
-  }
-
-  private async lookupSellerIdByMSquareTeamMemberId(
-    teamMemberId: string
-  ): Promise<number | null> {
-    const { emailByTeamId } =
-      await this.squareOAuthService.fetchTeamMemberEmailByIdMap("m");
-    const sellerEmail = emailByTeamId.get(teamMemberId.trim()) ?? "";
-    if (sellerEmail === "") return null;
-    return this.sheetsService.getSellerIdByEmail(sellerEmail);
   }
 }
 

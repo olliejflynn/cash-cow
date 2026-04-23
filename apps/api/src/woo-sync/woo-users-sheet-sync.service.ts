@@ -21,7 +21,8 @@ export class WooUsersSheetSyncService {
   ) {}
 
   /**
-   * Pull WordPress users via REST, merge Square team IDs by email, replace the Users sheet.
+   * Pull WordPress users via REST and replace the Users sheet (WordPress fields only).
+   * Square team member lists are still fetched and logged for manual copy into sheets.
    * If WordPress REST env is incomplete, returns without throwing (safe for CI builds).
    */
   async run(): Promise<{
@@ -55,25 +56,21 @@ export class WooUsersSheetSyncService {
       };
     }
 
-    let primaryTeamIdByEmail = new Map<string, string>();
-    let mTeamIdByEmail = new Map<string, string>();
     let squareFetched = 0;
     let mSquareFetched = 0;
     let primaryStaffInOrder: Array<{ teamId: string; email: string }> = [];
     let mStaffInOrder: Array<{ teamId: string; email: string }> = [];
     try {
-      const { teamIdByEmail, fetchedTeamMembers, staffInOrder } =
+      const { fetchedTeamMembers, staffInOrder } =
         await this.squareOAuthService.fetchTeamMemberIdByEmailMap("primary");
-      primaryTeamIdByEmail = teamIdByEmail;
       squareFetched = fetchedTeamMembers;
       primaryStaffInOrder = staffInOrder;
     } catch {
       // Keep sync non-fatal if Square list is unavailable.
     }
     try {
-      const { teamIdByEmail, fetchedTeamMembers, staffInOrder } =
+      const { fetchedTeamMembers, staffInOrder } =
         await this.squareOAuthService.fetchTeamMemberIdByEmailMap("m");
-      mTeamIdByEmail = teamIdByEmail;
       mSquareFetched = fetchedTeamMembers;
       mStaffInOrder = staffInOrder;
     } catch {
@@ -87,13 +84,6 @@ export class WooUsersSheetSyncService {
 
     const rows = users.map((u) => {
       const email = (u.email ?? "").trim();
-      const emailLower = email.toLowerCase();
-      const squareTeamId = emailLower !== ""
-        ? (primaryTeamIdByEmail.get(emailLower) ?? "")
-        : "";
-      const mSquareTeamId = emailLower !== ""
-        ? (mTeamIdByEmail.get(emailLower) ?? "")
-        : "";
       const first = (u.first_name ?? "").trim();
       const last = (u.last_name ?? "").trim();
       return {
@@ -101,15 +91,10 @@ export class WooUsersSheetSyncService {
         first_name: first !== "" ? first : (u.name ?? "").trim(),
         last_name: last,
         email,
-        square_team_id: squareTeamId,
-        m_square_team_id: mSquareTeamId,
+        square_team_id: "",
+        m_square_team_id: "",
       };
     });
-
-    const rowsWithSquareTeamId = rows.filter((r) => r.square_team_id !== "").length;
-    const rowsWithMSquareTeamId = rows.filter(
-      (r) => r.m_square_team_id !== ""
-    ).length;
 
     await this.sheetsService.replaceUsersSheetRows(rows);
 
@@ -119,8 +104,8 @@ export class WooUsersSheetSyncService {
       customersWritten: rows.length,
       squareTeamMembersFetched: squareFetched,
       mSquareTeamMembersFetched: mSquareFetched,
-      rowsWithSquareTeamId,
-      rowsWithMSquareTeamId,
+      rowsWithSquareTeamId: 0,
+      rowsWithMSquareTeamId: 0,
     };
   }
 
