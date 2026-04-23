@@ -17,12 +17,6 @@ const HELP_REPLY =
 /** Telegram sends this when setWebhook included secret_token (name is case-insensitive). */
 const TELEGRAM_SECRET_HEADER = "X-Telegram-Bot-Api-Secret-Token";
 
-/** Prefix for cash-in breakdown callback_data (seller id follows first `|`). */
-const CASH_IN_CALLBACK_PREFIX = "ci|";
-
-/** Telegram Bot API: callback_data max length (UTF-8 bytes). */
-const TELEGRAM_CALLBACK_DATA_MAX_BYTES = 64;
-
 @Controller("telegram")
 export class TelegramWebhookController {
   constructor(
@@ -59,12 +53,6 @@ export class TelegramWebhookController {
       return { ok: false };
     }
 
-    const callback = extractCallbackQuery(body);
-    if (callback != null) {
-      await this.handleCashInCallback(token, callback);
-      return { ok: true };
-    }
-
     const msg = extractMessageChatAndText(body);
     if (msg == null) {
       return { ok: true };
@@ -79,17 +67,19 @@ export class TelegramWebhookController {
       return { ok: true };
     }
 
-    if (isAllCommand(text)) {
-      await this.handleAllCommand(token, chatId);
+    const balanceCommand = parseBalanceCommand(text);
+    if (balanceCommand != null) {
+      await this.handleBalanceCommand(token, chatId, balanceCommand.sellerCode);
       return { ok: true };
     }
 
     return { ok: true };
   }
 
-  private async handleAllCommand(
+  private async handleBalanceCommand(
     token: string,
-    chatId: number
+    chatId: number,
+    sellerCode: string | null
   ): Promise<void> {
     let rows: SellerCashInRow[];
     try {
@@ -97,7 +87,7 @@ export class TelegramWebhookController {
     } catch (err: unknown) {
       const msg =
         err instanceof Error ? err.message : "Unknown error loading sheets.";
-      console.error("[TelegramWebhook] /all sheets error", msg);
+      console.error("[TelegramWebhook] /balance sheets error", msg);
       await telegramSendMessage(token, {
         chat_id: chatId,
         text: `Could not load cash-in data.\n${msg}`,
@@ -113,96 +103,29 @@ export class TelegramWebhookController {
       return;
     }
 
-    rows.sort((a, b) => b.finalTotal - a.finalTotal);
-
-    for (const row of rows) {
-      const summary = formatSellerSummary(row);
-      const cb = buildCashInCallbackData(row.sellerId);
-      const payload: Record<string, unknown> = {
-        chat_id: chatId,
-        text: summary,
-      };
-      if (cb.callbackData != null) {
-        payload.reply_markup = {
-          inline_keyboard: [
-            [{ text: "Full breakdown", callback_data: cb.callbackData }],
-          ],
-        };
-      } else {
-        payload.text =
-          summary +
-          "\n\n(Breakdown button unavailable: seller id is too long for Telegram.)";
+    if (sellerCode != null) {
+      const row = rows.find((r) => normalizeSellerCode(r.sellerId) === sellerCode);
+      if (row == null) {
+        await telegramSendMessage(token, {
+          chat_id: chatId,
+          text: `Seller ${sellerCode} was not found.`,
+        });
+        return;
       }
-      await telegramSendMessage(token, payload);
-    }
-  }
-
-  private async handleCashInCallback(
-    token: string,
-    callback: CallbackQueryExtract
-  ): Promise<void> {
-    await telegramAnswerCallbackQuery(token, {
-      callback_query_id: callback.callbackQueryId,
-    });
-
-    if (!callback.data.startsWith(CASH_IN_CALLBACK_PREFIX)) {
-      return;
-    }
-    const sellerId = callback.data.slice(CASH_IN_CALLBACK_PREFIX.length);
-    if (sellerId.trim() === "") {
-      return;
-    }
-
-    let rows: SellerCashInRow[];
-    try {
-      rows = await this.sheetsService.getAllSellersCashInFromSheets();
-    } catch (err: unknown) {
-      const msg =
-        err instanceof Error ? err.message : "Unknown error loading sheets.";
-      console.error("[TelegramWebhook] callback sheets error", msg);
       await telegramSendMessage(token, {
-        chat_id: callback.chatId,
-        text: `Could not load breakdown.\n${msg}`,
+        chat_id: chatId,
+        text: formatSingleSellerBalance(row),
+        parse_mode: "Markdown",
       });
       return;
     }
 
-    const row = rows.find((r) => r.sellerId === sellerId);
-    if (row == null) {
-      await telegramSendMessage(token, {
-        chat_id: callback.chatId,
-        text: `Seller "${sellerId}" was not found on the cash-in tabs.`,
-      });
-      return;
-    }
-
+    const table = formatAllBalancesTable(rows);
     await telegramSendMessage(token, {
-      chat_id: callback.chatId,
-      text: formatSellerBreakdown(row),
+      chat_id: chatId,
+      text: table,
     });
   }
-}
-
-type CallbackQueryExtract = {
-  callbackQueryId: string;
-  chatId: number;
-  data: string;
-};
-
-function extractCallbackQuery(body: unknown): CallbackQueryExtract | null {
-  if (!isRecord(body)) return null;
-  const cq = body["callback_query"];
-  if (!isRecord(cq)) return null;
-  const id = cq["id"];
-  const data = cq["data"];
-  if (typeof id !== "string" || typeof data !== "string") return null;
-  const message = cq["message"];
-  if (!isRecord(message)) return null;
-  const chat = message["chat"];
-  if (!isRecord(chat)) return null;
-  const chatId = chat["id"];
-  if (typeof chatId !== "number" || !Number.isFinite(chatId)) return null;
-  return { callbackQueryId: id, chatId, data };
 }
 
 function extractMessageChatAndText(
@@ -226,10 +149,22 @@ function isHelpCommand(text: string): boolean {
   return /^\/help(@\w+)?$/i.test(firstToken);
 }
 
-function isAllCommand(text: string): boolean {
+function parseBalanceCommand(text: string): { sellerCode: string | null } | null {
   const trimmed = text.trim();
-  const firstToken = trimmed.split(/\s+/)[0] ?? "";
-  return /^\/all(@\w+)?$/i.test(firstToken);
+  if (trimmed === "") return null;
+  const parts = trimmed.split(/\s+/);
+  const command = parts[0] ?? "";
+  if (!/^\/balance(@\w+)?$/i.test(command)) {
+    return null;
+  }
+  const sellerRaw = (parts[1] ?? "").trim();
+  if (sellerRaw === "") {
+    return { sellerCode: null };
+  }
+  if (!/^\d+$/.test(sellerRaw)) {
+    return { sellerCode: null };
+  }
+  return { sellerCode: normalizeSellerCode(sellerRaw) };
 }
 
 function formatMoney(n: number): string {
@@ -239,44 +174,52 @@ function formatMoney(n: number): string {
   });
 }
 
-function formatSellerSummary(row: SellerCashInRow): string {
+function formatSingleSellerBalance(row: SellerCashInRow): string {
+  const l = row.l.sumE;
+  const m = row.m.sumE;
+  const total = l + m;
   return (
-    `Cash in — ${row.sellerId}\n\n` +
-    `L cash in (🍻): ${formatMoney(row.l.cashIn)}\n` +
-    `M cash in (👑): ${formatMoney(row.m.cashIn)}\n` +
-    `Final total (L + M): ${formatMoney(row.finalTotal)}`
+    `L: ${formatMoney(l)}\n` +
+    `M: ${formatMoney(m)}\n\n` +
+    `Total: *${formatMoney(total)}*`
   );
 }
 
-function formatSellerBreakdown(row: SellerCashInRow): string {
-  return (
-    `Seller: ${row.sellerId}\n` +
-    `Final cash in (L + M): ${formatMoney(row.finalTotal)}\n\n` +
-    `L cash in 🍻\n` +
-    `Hand in total (sum C): ${formatMoney(row.l.sumC)}\n` +
-    `Card amount (sum D): ${formatMoney(row.l.sumD)}\n` +
-    `Cash in (C − D): ${formatMoney(row.l.cashIn)}\n` +
-    `Column E (sheet): ${formatMoney(row.l.sumE)}\n\n` +
-    `M cash in 👑\n` +
-    `Hand in total (sum C): ${formatMoney(row.m.sumC)}\n` +
-    `Card amount (sum D): ${formatMoney(row.m.sumD)}\n` +
-    `Cash in (C − D): ${formatMoney(row.m.cashIn)}\n` +
-    `Column E (sheet): ${formatMoney(row.m.sumE)}`
-  );
-}
+function formatAllBalancesTable(rows: SellerCashInRow[]): string {
+  const items = rows
+    .map((row) => {
+      const code = truncateSellerCode(row.sellerId);
+      const total = row.l.sumE + row.m.sumE;
+      return { code, total };
+    })
+    .sort((a, b) => b.total - a.total);
 
-function buildCashInCallbackData(sellerId: string): {
-  callbackData: string | null;
-} {
-  const payload = `${CASH_IN_CALLBACK_PREFIX}${sellerId}`;
-  if (utf8ByteLength(payload) <= TELEGRAM_CALLBACK_DATA_MAX_BYTES) {
-    return { callbackData: payload };
+  const codeWidth = 4;
+  const amountWidth = Math.max(
+    5,
+    ...items.map((item) => formatMoney(item.total).length),
+    "Total".length
+  );
+
+  const lines = [
+    `${"Code".padEnd(codeWidth, " ")}  ${"Total".padStart(amountWidth, " ")}`,
+    `${"-".repeat(codeWidth)}  ${"-".repeat(amountWidth)}`,
+  ];
+  for (const item of items) {
+    lines.push(
+      `${item.code.padEnd(codeWidth, " ")}  ${formatMoney(item.total).padStart(amountWidth, " ")}`
+    );
   }
-  return { callbackData: null };
+  return lines.join("\n");
 }
 
-function utf8ByteLength(s: string): number {
-  return new TextEncoder().encode(s).length;
+function truncateSellerCode(sellerId: string): string {
+  const digits = normalizeSellerCode(sellerId);
+  return digits.slice(0, 4).padEnd(4, " ");
+}
+
+function normalizeSellerCode(value: string): string {
+  return String(value ?? "").replace(/\D/g, "");
 }
 
 async function telegramSendMessage(
@@ -326,27 +269,6 @@ async function telegramSendMessage(
       })
     );
     return;
-  }
-}
-
-async function telegramAnswerCallbackQuery(
-  token: string,
-  payload: { callback_query_id: string; text?: string }
-): Promise<void> {
-  const url = `https://api.telegram.org/bot${encodeURIComponent(
-    token
-  )}/answerCallbackQuery`;
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  if (!res.ok) {
-    const errText = await res.text();
-    console.error(
-      "[TelegramWebhook] answerCallbackQuery failed",
-      JSON.stringify({ status: res.status, body: errText.slice(0, 500) })
-    );
   }
 }
 
