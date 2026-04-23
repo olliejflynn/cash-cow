@@ -59,7 +59,6 @@ export class SheetsService {
   /** Prevent same payment_id from being inserted concurrently in this process. */
   private readonly pendingSquarePaymentKeys = new Set<string>();
   private sellersSheetName: string = "Sellers";
-  private squareIdsSheetName: string = "Square IDs";
   private usersSheetName: string = "users";
   private lCashInSheetName: string = "L CASH IN 🍻";
   private mCashInSheetName: string = "M CASH IN 👑";
@@ -75,8 +74,6 @@ export class SheetsService {
     this.mSquarePaymentsSheetName =
       this.config.get<string>("mSquarePaymentsSheetName") ?? "M Square_payments";
     this.sellersSheetName = "Sellers";
-    this.squareIdsSheetName =
-      this.config.get<string>("squareIdsSheetName") ?? "Square IDs";
     this.usersSheetName = this.config.get<string>("usersSheetName") ?? "users";
     this.lCashInSheetName =
       this.config.get<string>("lCashInSheetName") ?? "L CASH IN 🍻";
@@ -376,42 +373,42 @@ export class SheetsService {
   }
 
   /**
-   * Square IDs tab: match payment `team_member_id` to the given team column,
-   * return `user_id` for the payment row (written as seller_id in Square_payments).
+   * Sellers tab: match Square payment `team_member_id` to the given team-ID column only
+   * (`Square_team_ID` or `M Square_team_ID`), return `seller_id` for the payment row.
+   * Email is never used for this lookup.
    */
-  async getSellerIdFromSquareIdsByTeamMember(
+  async getSellerIdFromSellersByTeamMemberId(
     teamMemberId: string,
     teamColumnHeader: "Square_team_ID" | "M Square_team_ID"
   ): Promise<number | null> {
-    const normalizedTeam = teamMemberId.trim();
+    const normalizedTeam = normalizeSquareTeamMemberId(teamMemberId);
     if (normalizedTeam === "") return null;
 
     const client = await this.getSheetsClient();
-    const rangePrefix = a1SheetRangePrefix(this.squareIdsSheetName);
     const response = await client.spreadsheets.values.get({
       spreadsheetId: this.spreadsheetId,
-      range: `${rangePrefix}A:Z`,
+      range: `${this.sellersSheetName}!A:Z`,
     });
     const values = response.data.values ?? [];
     if (values.length === 0) return null;
 
     const header = values[0]?.map((v) => String(v).trim()) ?? [];
     const normHeader = (h: string) => h.toLowerCase().replace(/\s+/g, "_");
-    const userIdIdx = header.findIndex((h) => normHeader(h) === "user_id");
     const teamIdx = header.findIndex(
       (h) => normHeader(h) === normHeader(teamColumnHeader)
     );
-    if (userIdIdx < 0 || teamIdx < 0) {
+    const sellerIdx = header.findIndex((h) => normHeader(h) === "seller_id");
+    if (teamIdx < 0 || sellerIdx < 0) {
       throw new Error(
-        `Square IDs tab must include 'user_id' and '${teamColumnHeader}' headers`
+        `Sellers tab must include '${teamColumnHeader}' and 'seller_id' headers`
       );
     }
 
     for (let i = 1; i < values.length; i++) {
       const row = values[i] ?? [];
-      const teamCell = String(row[teamIdx] ?? "").trim();
+      const teamCell = normalizeSquareTeamMemberId(row[teamIdx]);
       if (teamCell !== normalizedTeam) continue;
-      return parseSellerIdInteger(row[userIdIdx]);
+      return parseSellerIdInteger(row[sellerIdx]);
     }
     return null;
   }
@@ -423,67 +420,10 @@ export class SheetsService {
   async getSellerIdBySquareTeamMemberId(
     teamMemberId: string
   ): Promise<number | null> {
-    const normalizedTeam = teamMemberId.trim();
-    if (normalizedTeam === "") return null;
-
-    const client = await this.getSheetsClient();
-    const response = await client.spreadsheets.values.get({
-      spreadsheetId: this.spreadsheetId,
-      range: `${this.sellersSheetName}!A:Z`,
-    });
-    const values = response.data.values ?? [];
-    if (values.length === 0) return null;
-
-    const header = values[0]?.map((v) => String(v).trim()) ?? [];
-    const normHeader = (h: string) => h.toLowerCase().replace(/\s+/g, "_");
-    const teamIdx = header.findIndex((h) => normHeader(h) === "square_team_id");
-    const sellerIdx = header.findIndex((h) => normHeader(h) === "seller_id");
-    if (teamIdx < 0 || sellerIdx < 0) {
-      throw new Error(
-        `Sellers tab must include 'Square_team_ID' and 'seller_id' headers`
-      );
-    }
-
-    for (let i = 1; i < values.length; i++) {
-      const row = values[i] ?? [];
-      const teamCell = String(row[teamIdx] ?? "").trim();
-      if (teamCell !== normalizedTeam) continue;
-      const parsed = parseSellerIdInteger(row[sellerIdx]);
-      return parsed;
-    }
-    return null;
-  }
-
-  /**
-   * Sellers tab: match `email` to seller row and return `seller_id`.
-   */
-  async getSellerIdByEmail(email: string): Promise<number | null> {
-    const normalizedEmail = email.trim().toLowerCase();
-    if (normalizedEmail === "") return null;
-
-    const client = await this.getSheetsClient();
-    const response = await client.spreadsheets.values.get({
-      spreadsheetId: this.spreadsheetId,
-      range: `${this.sellersSheetName}!A:Z`,
-    });
-    const values = response.data.values ?? [];
-    if (values.length === 0) return null;
-
-    const header = values[0]?.map((v) => String(v).trim()) ?? [];
-    const normHeader = (h: string) => h.toLowerCase().replace(/\s+/g, "_");
-    const emailIdx = header.findIndex((h) => normHeader(h) === "email");
-    const sellerIdx = header.findIndex((h) => normHeader(h) === "seller_id");
-    if (emailIdx < 0 || sellerIdx < 0) {
-      throw new Error(`Sellers tab must include 'email' and 'seller_id' headers`);
-    }
-
-    for (let i = 1; i < values.length; i++) {
-      const row = values[i] ?? [];
-      const rowEmail = String(row[emailIdx] ?? "").trim().toLowerCase();
-      if (rowEmail !== normalizedEmail) continue;
-      return parseSellerIdInteger(row[sellerIdx]);
-    }
-    return null;
+    return this.getSellerIdFromSellersByTeamMemberId(
+      teamMemberId,
+      "Square_team_ID"
+    );
   }
 
   /**
@@ -822,6 +762,15 @@ function parseSheetMoneyNumber(value: unknown): number {
   if (s === "") return 0;
   const n = parseFloat(s);
   return Number.isFinite(n) ? n : 0;
+}
+
+/** Square team member id from API or Sheets cell (strip spaces and leading apostrophe). */
+function normalizeSquareTeamMemberId(value: unknown): string {
+  let s = String(value ?? "").trim();
+  if (s.startsWith("'")) {
+    s = s.slice(1).trim();
+  }
+  return s;
 }
 
 /**

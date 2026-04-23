@@ -25,13 +25,14 @@ export class SquareWebhookController {
       getNumericField(getNestedRecord(payment, "total_money"), "amount");
     const status = (getStringField(payment, "status") ?? "").trim();
     const paymentId = (getStringField(payment, "id") ?? "").trim();
+    const teamMemberId = extractPaymentTeamMemberId(payment);
     const row: SquarePaymentRow = {
       payment_id: paymentId,
       payment_time:
         getStringField(payment, "updated_at") ??
         getStringField(payment, "created_at") ??
         "",
-      team_member: getStringField(payment, "team_member_id") ?? "",
+      team_member: teamMemberId,
       seller_id: "",
       amount_cents: amount == null ? "" : String(amount),
       status,
@@ -41,7 +42,7 @@ export class SquareWebhookController {
       return { ok: true };
     }
 
-    if (paymentId === "" || row.team_member.trim() === "") {
+    if (paymentId === "" || teamMemberId.trim() === "") {
       return { ok: true };
     }
 
@@ -68,12 +69,12 @@ export class SquareWebhookController {
 
     const sellerId =
       route === "primary"
-        ? await this.sheetsService.getSellerIdFromSquareIdsByTeamMember(
-            row.team_member,
+        ? await this.sheetsService.getSellerIdFromSellersByTeamMemberId(
+            teamMemberId,
             "Square_team_ID"
           )
-        : await this.sheetsService.getSellerIdFromSquareIdsByTeamMember(
-            row.team_member,
+        : await this.sheetsService.getSellerIdFromSellersByTeamMemberId(
+            teamMemberId,
             "M Square_team_ID"
           );
     if (sellerId == null) {
@@ -126,6 +127,18 @@ function getPaymentObject(payload: Record<string, unknown>): Record<string, unkn
   const data = getNestedRecord(payload, "data");
   const object = getNestedRecord(data, "object");
   return getNestedRecord(object, "payment");
+}
+
+/**
+ * Square team member id only (never buyer email or staff email).
+ * Reads top-level team_member_id, then nested team_member.id if present.
+ */
+function extractPaymentTeamMemberId(payment: Record<string, unknown>): string {
+  const top = (getStringField(payment, "team_member_id") ?? "").trim();
+  if (top !== "") return top;
+  const teamMember = getNestedRecord(payment, "team_member");
+  const nested = (getStringField(teamMember, "id") ?? "").trim();
+  return nested;
 }
 
 function getMerchantId(
