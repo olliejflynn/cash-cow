@@ -65,16 +65,22 @@ export class WooUsersSheetSyncService {
         await this.squareOAuthService.fetchTeamMemberIdByEmailMap("primary");
       squareFetched = fetchedTeamMembers;
       primaryStaffInOrder = staffInOrder;
-    } catch {
-      // Keep sync non-fatal if Square list is unavailable.
+    } catch (err) {
+      console.warn(
+        "[UsersSheetSync] Square team-member fetch failed (primary):",
+        err instanceof Error ? err.message : err
+      );
     }
     try {
       const { fetchedTeamMembers, staffInOrder } =
         await this.squareOAuthService.fetchTeamMemberIdByEmailMap("m");
       mSquareFetched = fetchedTeamMembers;
       mStaffInOrder = staffInOrder;
-    } catch {
-      // Keep sync non-fatal if M Square list is unavailable.
+    } catch (err) {
+      console.warn(
+        "[UsersSheetSync] Square team-member fetch failed (m):",
+        err instanceof Error ? err.message : err
+      );
     }
 
     this.printSquareAccountTeamIds("primary", primaryStaffInOrder);
@@ -170,8 +176,16 @@ export class WooUsersSheetSyncService {
     console.log(
       `[UsersSheetSync] Square staff listing (${accountKey}): ${rows.length} row(s)`
     );
-    if (rows.length > 0) {
-      console.table(rows);
+    if (rows.length === 0) {
+      console.warn(
+        `[UsersSheetSync] No Square team rows for "${accountKey}" — check OAuth credentials, SQUARE_PRIMARY_MERCHANT_ID / SQUARE_M_MERCHANT_ID, and logs above for fetch errors.`
+      );
+      return;
     }
+    console.table(rows);
+    // npm/CI logs often render console.table poorly; JSON is always visible in build output.
+    console.log(
+      `[UsersSheetSync] Square staff (${accountKey}) JSON:\n${JSON.stringify(rows, null, 2)}`
+    );
   }
 }
