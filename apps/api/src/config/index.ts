@@ -24,6 +24,14 @@ export const config = () => ({
   lCashInSheetName: (process.env.L_CASH_IN_SHEET_NAME ?? "L CASH IN 🍻").trim(),
   /** Telegram /all: M cash-in tab (same columns as L). */
   mCashInSheetName: (process.env.M_CASH_IN_SHEET_NAME ?? "M CASH IN 👑").trim(),
+  /**
+   * Outstanding tab: row 1 headers Seller_Code (A), Outstanding (B). Used by Telegram /cash.
+   */
+  outstandingSheetName: (process.env.OUTSTANDING_SHEET_NAME ?? "Outstanding").trim(),
+  /** Sales_Log checkbox column header (must match sheet). */
+  salesLogCashedColumnName: (
+    process.env.SALES_LOG_CASHED_COLUMN_NAME ?? "cashed?"
+  ).trim(),
   defaultHandInPercent: parseFloat(
     process.env.DEFAULT_HAND_IN_PERCENT ?? "100"
   ),

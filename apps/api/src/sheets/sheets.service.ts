@@ -20,6 +20,7 @@ const SALES_LOG_COLUMNS: (keyof SalesLogRow)[] = [
   "seller_code",
   "Category (Company)",
   "hand_in_amount",
+  "cashed?",
 ];
 /** Matches sheet headers: Payment ID, Payment Time, Team Member, Seller ID, Amount (cents), Status */
 const SQUARE_PAYMENT_COLUMNS: (keyof SquarePaymentRow)[] = [
@@ -48,6 +49,31 @@ export type SellerCashInRow = {
   finalTotal: number;
 };
 
+/** Read-only preview for Telegram /cash before user confirms. */
+export type SellerCashInPreview = {
+  sellerCode: string;
+  lCashE: number;
+  mCashE: number;
+  amountWasAuto: boolean;
+  amountUsed: number;
+  currentOutstanding: number;
+  newOutstanding: number;
+  salesLogRowsToUpdate: number;
+  squareRowsPrimary: number;
+  squareRowsM: number;
+};
+
+/** Result after applying /cash mutations. */
+export type SellerCashInApplyResult = {
+  sellerCode: string;
+  amountUsed: number;
+  newOutstanding: number;
+  outstandingRowDeleted: boolean;
+  salesLogRowsUpdated: number;
+  squareRowsDeletedPrimary: number;
+  squareRowsDeletedM: number;
+};
+
 @Injectable()
 export class SheetsService {
   private sheets: sheets_v4.Sheets | null = null;
@@ -63,6 +89,8 @@ export class SheetsService {
   private usersSheetName: string = "users";
   private lCashInSheetName: string = "L CASH IN 🍻";
   private mCashInSheetName: string = "M CASH IN 👑";
+  private outstandingSheetName: string = "Outstanding";
+  private salesLogCashedColumnName: string = "cashed?";
 
   constructor(private readonly config: ConfigService) {
     this.spreadsheetId = this.config.get<string>("spreadsheetId") ?? "";
@@ -82,6 +110,10 @@ export class SheetsService {
       this.config.get<string>("lCashInSheetName") ?? "L CASH IN 🍻";
     this.mCashInSheetName =
       this.config.get<string>("mCashInSheetName") ?? "M CASH IN 👑";
+    this.outstandingSheetName =
+      this.config.get<string>("outstandingSheetName") ?? "Outstanding";
+    this.salesLogCashedColumnName =
+      this.config.get<string>("salesLogCashedColumnName") ?? "cashed?";
   }
 
   private async getSheetsClient(): Promise<sheets_v4.Sheets> {
@@ -522,12 +554,14 @@ export class SheetsService {
     const titleL = await this.resolveSheetTitleForConfiguredTab(
       client,
       spreadsheetId,
-      this.lCashInSheetName
+      this.lCashInSheetName,
+      "Check L_CASH_IN_SHEET_NAME."
     );
     const titleM = await this.resolveSheetTitleForConfiguredTab(
       client,
       spreadsheetId,
-      this.mCashInSheetName
+      this.mCashInSheetName,
+      "Check M_CASH_IN_SHEET_NAME."
     );
 
     const rangeL = `${a1SheetRangePrefix(titleL)}A:E`;
@@ -575,11 +609,12 @@ export class SheetsService {
   private async resolveSheetTitleForConfiguredTab(
     client: sheets_v4.Sheets,
     spreadsheetId: string,
-    configuredName: string
+    configuredName: string,
+    notFoundHint?: string
   ): Promise<string> {
     const wanted = configuredName.trim();
     if (wanted === "") {
-      throw new Error("Cash-in sheet name is empty");
+      throw new Error("Sheet tab name is empty");
     }
     const meta = await client.spreadsheets.get({
       spreadsheetId,
@@ -592,11 +627,425 @@ export class SheetsService {
         .map((s) => s.properties?.title)
         .find((t) => t != null && t.trim().toLowerCase() === wantedLower) ?? null;
     if (found == null) {
-      throw new Error(
-        `Cash-in sheet tab not found: "${wanted}". Check L_CASH_IN_SHEET_NAME / M_CASH_IN_SHEET_NAME.`
-      );
+      const hint =
+        notFoundHint ??
+        "Check the configured sheet name in environment variables.";
+      throw new Error(`Sheet tab not found: "${wanted}". ${hint}`);
     }
     return found;
+  }
+
+  /**
+   * Telegram /cash — preview only (no writes).
+   * @param explicitAmount `undefined` = use L column E + M column E; otherwise use this hand-in amount.
+   */
+  async previewSellerCashInFromSheets(
+    sellerCode: string,
+    explicitAmount?: number
+  ): Promise<SellerCashInPreview> {
+    const ctx = await this.loadCashInContextForSeller(sellerCode);
+    const amountWasAuto = explicitAmount === undefined;
+    const amountUsed = amountWasAuto ? ctx.lCashE + ctx.mCashE : explicitAmount;
+    if (!Number.isFinite(amountUsed)) {
+      throw new Error("Amount is not a valid number.");
+    }
+    if (amountUsed < 0) {
+      throw new Error("Amount cannot be negative.");
+    }
+    const newOutstanding =
+      ctx.lCashE + ctx.mCashE + ctx.currentOutstanding - amountUsed;
+    return {
+      sellerCode,
+      lCashE: ctx.lCashE,
+      mCashE: ctx.mCashE,
+      amountWasAuto,
+      amountUsed,
+      currentOutstanding: ctx.currentOutstanding,
+      newOutstanding,
+      salesLogRowsToUpdate: ctx.salesLogMatchCount,
+      squareRowsPrimary: ctx.squarePrimaryDeleteCount,
+      squareRowsM: ctx.squareMDeleteCount,
+    };
+  }
+
+  /**
+   * Telegram /cash — apply after user confirms. Re-reads sheet values at execution time.
+   * @param explicitAmount `undefined` = auto (L E + M E); else use this amount.
+   */
+  async applySellerCashInFromSheets(
+    sellerCode: string,
+    explicitAmount?: number
+  ): Promise<SellerCashInApplyResult> {
+    const client = await this.getSheetsClient();
+    const spreadsheetId = this.spreadsheetId.trim();
+    if (spreadsheetId === "") {
+      throw new Error("SPREADSHEET_ID is not set");
+    }
+
+    const ctx = await this.loadCashInContextForSeller(sellerCode);
+    const amountUsed =
+      explicitAmount === undefined ? ctx.lCashE + ctx.mCashE : explicitAmount;
+    if (!Number.isFinite(amountUsed)) {
+      throw new Error("Amount is not a valid number.");
+    }
+    if (amountUsed < 0) {
+      throw new Error("Amount cannot be negative.");
+    }
+    const newOutstanding =
+      ctx.lCashE + ctx.mCashE + ctx.currentOutstanding - amountUsed;
+
+    const outstandingTitle = await this.resolveSheetTitleForConfiguredTab(
+      client,
+      spreadsheetId,
+      this.outstandingSheetName,
+      "Check OUTSTANDING_SHEET_NAME."
+    );
+    const outstandingSheetId = await this.getSheetIdForTitle(
+      client,
+      spreadsheetId,
+      outstandingTitle
+    );
+    const outPrefix = a1SheetRangePrefix(outstandingTitle);
+
+    const outstandingRowDeleted =
+      Math.abs(newOutstanding) < OUTSTANDING_ZERO_EPS &&
+      ctx.outstandingSheetRow1Based != null;
+    await this.writeOutstandingValue(
+      client,
+      spreadsheetId,
+      outPrefix,
+      outstandingSheetId,
+      sellerCode,
+      newOutstanding,
+      ctx.outstandingSheetRow1Based
+    );
+
+    const salesUpdated = await this.markSalesLogCashedForSeller(
+      client,
+      spreadsheetId,
+      sellerCode
+    );
+
+    const delP = await this.deleteSquarePaymentRowsForSeller(
+      client,
+      spreadsheetId,
+      this.squarePaymentsSheetName,
+      sellerCode
+    );
+    const delM = await this.deleteSquarePaymentRowsForSeller(
+      client,
+      spreadsheetId,
+      this.mSquarePaymentsSheetName,
+      sellerCode
+    );
+
+    return {
+      sellerCode,
+      amountUsed,
+      newOutstanding: Math.abs(newOutstanding) < OUTSTANDING_ZERO_EPS ? 0 : newOutstanding,
+      outstandingRowDeleted,
+      salesLogRowsUpdated: salesUpdated,
+      squareRowsDeletedPrimary: delP,
+      squareRowsDeletedM: delM,
+    };
+  }
+
+  private async loadCashInContextForSeller(sellerCode: string): Promise<{
+    lCashE: number;
+    mCashE: number;
+    currentOutstanding: number;
+    outstandingSheetRow1Based: number | null;
+    salesLogMatchCount: number;
+    squarePrimaryDeleteCount: number;
+    squareMDeleteCount: number;
+  }> {
+    const client = await this.getSheetsClient();
+    const spreadsheetId = this.spreadsheetId.trim();
+    if (spreadsheetId === "") {
+      throw new Error("SPREADSHEET_ID is not set");
+    }
+
+    const cashRows = await this.getAllSellersCashInFromSheets();
+    const cash = cashRows.find(
+      (r) => normalizeCashInSellerDigits(r.sellerId) === sellerCode
+    );
+    if (cash == null) {
+      throw new Error(
+        `Seller ${sellerCode} not found on L/M cash-in tabs.`
+      );
+    }
+    const lCashE = cash.l.sumE;
+    const mCashE = cash.m.sumE;
+
+    const outstandingTitle = await this.resolveSheetTitleForConfiguredTab(
+      client,
+      spreadsheetId,
+      this.outstandingSheetName,
+      "Check OUTSTANDING_SHEET_NAME."
+    );
+    const outRange = `${a1SheetRangePrefix(outstandingTitle)}A:B`;
+    const outRes = await client.spreadsheets.values.get({
+      spreadsheetId,
+      range: outRange,
+    });
+    const outValues = outRes.data.values ?? [];
+    const { currentOutstanding, row1Based } = parseOutstandingForSeller(
+      outValues,
+      sellerCode
+    );
+
+    const salesLogRes = await client.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${this.salesLogSheetName}!A:Z`,
+    });
+    const salesValues = salesLogRes.data.values ?? [];
+    const salesLogMatchCount = countSalesLogRowsForSeller(
+      salesValues,
+      sellerCode,
+      this.salesLogCashedColumnName
+    );
+
+    const sqP = await this.countSquareRowsForSeller(
+      client,
+      spreadsheetId,
+      this.squarePaymentsSheetName,
+      sellerCode
+    );
+    const sqM = await this.countSquareRowsForSeller(
+      client,
+      spreadsheetId,
+      this.mSquarePaymentsSheetName,
+      sellerCode
+    );
+
+    return {
+      lCashE,
+      mCashE,
+      currentOutstanding,
+      outstandingSheetRow1Based: row1Based,
+      salesLogMatchCount,
+      squarePrimaryDeleteCount: sqP,
+      squareMDeleteCount: sqM,
+    };
+  }
+
+  private async getSheetIdForTitle(
+    client: sheets_v4.Sheets,
+    spreadsheetId: string,
+    sheetTitle: string
+  ): Promise<number> {
+    const meta = await client.spreadsheets.get({
+      spreadsheetId,
+      fields: "sheets.properties",
+    });
+    const want = sheetTitle.trim().toLowerCase();
+    const sheet = (meta.data.sheets ?? []).find(
+      (s) => (s.properties?.title ?? "").trim().toLowerCase() === want
+    );
+    const id = sheet?.properties?.sheetId;
+    if (id == null) {
+      throw new Error(`No sheetId for tab "${sheetTitle}"`);
+    }
+    return id;
+  }
+
+  private async writeOutstandingValue(
+    client: sheets_v4.Sheets,
+    spreadsheetId: string,
+    rangePrefix: string,
+    sheetId: number,
+    sellerCode: string,
+    newOutstanding: number,
+    existingRow1Based: number | null
+  ): Promise<void> {
+    const abs = Math.abs(newOutstanding);
+    if (abs < OUTSTANDING_ZERO_EPS) {
+      if (existingRow1Based != null) {
+        await this.deleteSheetRowsBy1BasedIndices(
+          client,
+          spreadsheetId,
+          sheetId,
+          [existingRow1Based]
+        );
+      }
+      return;
+    }
+
+    const cell = String(newOutstanding);
+    if (existingRow1Based != null) {
+      const colB = `${rangePrefix}B${existingRow1Based}`;
+      await client.spreadsheets.values.update({
+        spreadsheetId,
+        range: colB,
+        valueInputOption: "USER_ENTERED",
+        requestBody: { values: [[cell]] },
+      });
+      return;
+    }
+
+    const appendRange = `${rangePrefix}A:B`;
+    await client.spreadsheets.values.append({
+      spreadsheetId,
+      range: appendRange,
+      valueInputOption: "USER_ENTERED",
+      insertDataOption: "INSERT_ROWS",
+      requestBody: { values: [[sellerCode, cell]] },
+    });
+  }
+
+  private async markSalesLogCashedForSeller(
+    client: sheets_v4.Sheets,
+    spreadsheetId: string,
+    sellerCode: string
+  ): Promise<number> {
+    const response = await client.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${this.salesLogSheetName}!A:Z`,
+    });
+    const values = response.data.values ?? [];
+    if (values.length === 0) {
+      throw new Error("Sales_Log tab is empty.");
+    }
+    const header = values[0]?.map((v) => String(v).trim()) ?? [];
+    const sellerIdx = header.findIndex(
+      (h) => normSheetHeader(h) === "seller_code"
+    );
+    const cashedIdx = header.findIndex(
+      (h) => normSheetHeader(h) === normSheetHeader(this.salesLogCashedColumnName)
+    );
+    if (sellerIdx < 0) {
+      throw new Error("Sales_Log must include a seller_code column.");
+    }
+    if (cashedIdx < 0) {
+      throw new Error(
+        `Sales_Log must include column "${this.salesLogCashedColumnName}".`
+      );
+    }
+
+    const updates: sheets_v4.Schema$ValueRange[] = [];
+    for (let i = 1; i < values.length; i++) {
+      const row = values[i] ?? [];
+      const rowSeller = normalizeCashInSellerDigits(String(row[sellerIdx] ?? ""));
+      if (rowSeller !== sellerCode) continue;
+      const rowNumber = i + 1;
+      const col = toA1Column(cashedIdx + 1);
+      updates.push({
+        range: `${this.salesLogSheetName}!${col}${rowNumber}`,
+        values: [["TRUE"]],
+      });
+    }
+
+    if (updates.length > 0) {
+      await client.spreadsheets.values.batchUpdate({
+        spreadsheetId,
+        requestBody: {
+          valueInputOption: "USER_ENTERED",
+          data: updates,
+        },
+      });
+    }
+    return updates.length;
+  }
+
+  private async countSquareRowsForSeller(
+    client: sheets_v4.Sheets,
+    spreadsheetId: string,
+    sheetName: string,
+    sellerCode: string
+  ): Promise<number> {
+    const title = await this.resolveSheetTitleForConfiguredTab(
+      client,
+      spreadsheetId,
+      sheetName,
+      `Check sheet name for "${sheetName}".`
+    );
+    const response = await client.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${title}!A:F`,
+    });
+    const values = response.data.values ?? [];
+    if (values.length === 0) return 0;
+    const header = values[0]?.map((v) => String(v).trim()) ?? [];
+    const sellerIdx = header.findIndex(
+      (h) => normSheetHeader(h) === "seller_id"
+    );
+    if (sellerIdx < 0) return 0;
+    let n = 0;
+    for (let i = 1; i < values.length; i++) {
+      const row = values[i] ?? [];
+      if (squareRowSellerMatches(row[sellerIdx], sellerCode)) n += 1;
+    }
+    return n;
+  }
+
+  private async deleteSquarePaymentRowsForSeller(
+    client: sheets_v4.Sheets,
+    spreadsheetId: string,
+    sheetName: string,
+    sellerCode: string
+  ): Promise<number> {
+    const title = await this.resolveSheetTitleForConfiguredTab(
+      client,
+      spreadsheetId,
+      sheetName,
+      `Check sheet name for "${sheetName}".`
+    );
+    const sheetId = await this.getSheetIdForTitle(
+      client,
+      spreadsheetId,
+      title
+    );
+    const response = await client.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${title}!A:F`,
+    });
+    const values = response.data.values ?? [];
+    if (values.length < 2) return 0;
+    const header = values[0]?.map((v) => String(v).trim()) ?? [];
+    const sellerIdx = header.findIndex(
+      (h) => normSheetHeader(h) === "seller_id"
+    );
+    if (sellerIdx < 0) return 0;
+
+    const rowNumbers1Based: number[] = [];
+    for (let i = 1; i < values.length; i++) {
+      const row = values[i] ?? [];
+      if (squareRowSellerMatches(row[sellerIdx], sellerCode)) {
+        rowNumbers1Based.push(i + 1);
+      }
+    }
+    if (rowNumbers1Based.length === 0) return 0;
+    await this.deleteSheetRowsBy1BasedIndices(
+      client,
+      spreadsheetId,
+      sheetId,
+      rowNumbers1Based
+    );
+    return rowNumbers1Based.length;
+  }
+
+  private async deleteSheetRowsBy1BasedIndices(
+    client: sheets_v4.Sheets,
+    spreadsheetId: string,
+    sheetId: number,
+    rowNumbers1Based: number[]
+  ): Promise<void> {
+    const unique = [...new Set(rowNumbers1Based)].sort((a, b) => b - a);
+    const requests = unique.map((row1) => ({
+      deleteDimension: {
+        range: {
+          sheetId,
+          dimension: "ROWS" as const,
+          startIndex: row1 - 1,
+          endIndex: row1,
+        },
+      },
+    }));
+    if (requests.length === 0) return;
+    await client.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: { requests },
+    });
   }
 
   /**
@@ -733,6 +1182,17 @@ export class SheetsService {
   }
 }
 
+const OUTSTANDING_ZERO_EPS = 1e-9;
+
+function normSheetHeader(h: string): string {
+  return h.trim().toLowerCase().replace(/\s+/g, "_");
+}
+
+/** Digits-only seller key for matching across tabs (Telegram /cash, /balance). */
+function normalizeCashInSellerDigits(value: string): string {
+  return String(value ?? "").replace(/\D/g, "");
+}
+
 function aggregateCashInRowsBySeller(
   rows: unknown[][]
 ): Map<string, { sumC: number; sumD: number; sumE: number }> {
@@ -765,6 +1225,69 @@ function parseSheetMoneyNumber(value: unknown): number {
   if (s === "") return 0;
   const n = parseFloat(s);
   return Number.isFinite(n) ? n : 0;
+}
+
+function parseOutstandingForSeller(
+  values: unknown[][],
+  sellerCode: string
+): { currentOutstanding: number; row1Based: number | null } {
+  if (values.length === 0) {
+    return { currentOutstanding: 0, row1Based: null };
+  }
+  const headerRow = values[0] ?? [];
+  const idxSeller = headerRow.findIndex(
+    (c) => normSheetHeader(String(c ?? "")) === "seller_code"
+  );
+  const idxOut = headerRow.findIndex(
+    (c) => normSheetHeader(String(c ?? "")) === "outstanding"
+  );
+  if (idxSeller < 0 || idxOut < 0) {
+    throw new Error(
+      'Outstanding tab row 1 must include headers "Seller_Code" and "Outstanding".'
+    );
+  }
+  for (let i = 1; i < values.length; i++) {
+    const row = values[i] ?? [];
+    const rowSeller = normalizeCashInSellerDigits(String(row[idxSeller] ?? ""));
+    if (rowSeller !== sellerCode) continue;
+    return {
+      currentOutstanding: parseSheetMoneyNumber(row[idxOut]),
+      row1Based: i + 1,
+    };
+  }
+  return { currentOutstanding: 0, row1Based: null };
+}
+
+function countSalesLogRowsForSeller(
+  values: unknown[][],
+  sellerCode: string,
+  cashedColumnHeader: string
+): number {
+  if (values.length < 2) return 0;
+  const header = values[0]?.map((v) => String(v).trim()) ?? [];
+  const sellerIdx = header.findIndex(
+    (h) => normSheetHeader(h) === "seller_code"
+  );
+  const cashedIdx = header.findIndex(
+    (h) => normSheetHeader(h) === normSheetHeader(cashedColumnHeader)
+  );
+  if (sellerIdx < 0 || cashedIdx < 0) return 0;
+  let n = 0;
+  for (let i = 1; i < values.length; i++) {
+    const row = values[i] ?? [];
+    const rowSeller = normalizeCashInSellerDigits(String(row[sellerIdx] ?? ""));
+    if (rowSeller !== sellerCode) continue;
+    n += 1;
+  }
+  return n;
+}
+
+function squareRowSellerMatches(cell: unknown, sellerCodeNorm: string): boolean {
+  const parsed = parseSellerIdInteger(cell);
+  if (parsed != null) {
+    return String(parsed) === sellerCodeNorm;
+  }
+  return normalizeCashInSellerDigits(String(cell ?? "")) === sellerCodeNorm;
 }
 
 /** Square team member id from API or Sheets cell (strip spaces and leading apostrophe). */

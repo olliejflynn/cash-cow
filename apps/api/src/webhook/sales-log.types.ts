@@ -17,4 +17,6 @@ export interface SalesLogRow {
   seller_code: string;
   "Category (Company)": string;
   hand_in_amount: string;
+  /** Checkbox column on Sales_Log; new rows start unchecked. */
+  "cashed?": string;
 }

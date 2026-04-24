@@ -31,6 +31,7 @@ const SALES_LOG_COLUMNS = [
   "seller_code",
   "Category (Company)",
   "hand_in_amount",
+  "cashed?",
 ];
 
 function stripQuotes(s) {
@@ -93,6 +94,7 @@ async function main() {
     seller_code: "TEST",
     "Category (Company)": "",
     hand_in_amount: "0",
+    "cashed?": "FALSE",
   };
 
   const values = [SALES_LOG_COLUMNS.map((key) => testRow[key] ?? "")];

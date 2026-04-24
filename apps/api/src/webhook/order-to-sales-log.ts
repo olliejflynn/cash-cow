@@ -56,6 +56,7 @@ export function orderToSalesLogRows(
       seller_code: sellerCode,
       "Category (Company)": categoryCompany,
       hand_in_amount: String(handInAmount),
+      "cashed?": "FALSE",
     };
   });
 }
