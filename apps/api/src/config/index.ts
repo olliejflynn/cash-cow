@@ -48,6 +48,11 @@ export const config = () => ({
     process.env.WORDPRESS_REST_APPLICATION_PASSWORD ?? ""
   ).trim(),
   usersSheetName: (process.env.USERS_SHEET_NAME ?? "users").trim(),
+  /**
+   * Tab: user_id, email, Square_team_ID, M Square_team_ID — Square webhooks match
+   * team_member_id to the team columns and write user_id as Seller ID on payment rows.
+   */
+  squareIdsSheetName: (process.env.SQUARE_IDS_SHEET_NAME ?? "Square IDs").trim(),
   usersSheetSyncSecret: (process.env.USERS_SHEET_SYNC_SECRET ?? "").trim(),
   telegramBotToken: (process.env.TELEGRAM_BOT_TOKEN ?? "").trim(),
   /** If set, webhook requests must send X-Telegram-Bot-Api-Secret-Token matching this value. */

@@ -69,11 +69,11 @@ export class SquareWebhookController {
 
     const sellerId =
       route === "primary"
-        ? await this.sheetsService.getSellerIdFromSellersByTeamMemberId(
+        ? await this.sheetsService.getSellerIdFromSquareIdsByTeamMember(
             teamMemberId,
             "Square_team_ID"
           )
-        : await this.sheetsService.getSellerIdFromSellersByTeamMemberId(
+        : await this.sheetsService.getSellerIdFromSquareIdsByTeamMember(
             teamMemberId,
             "M Square_team_ID"
           );

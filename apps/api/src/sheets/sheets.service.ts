@@ -59,6 +59,7 @@ export class SheetsService {
   /** Prevent same payment_id from being inserted concurrently in this process. */
   private readonly pendingSquarePaymentKeys = new Set<string>();
   private sellersSheetName: string = "Sellers";
+  private squareIdsSheetName: string = "Square IDs";
   private usersSheetName: string = "users";
   private lCashInSheetName: string = "L CASH IN 🍻";
   private mCashInSheetName: string = "M CASH IN 👑";
@@ -74,6 +75,8 @@ export class SheetsService {
     this.mSquarePaymentsSheetName =
       this.config.get<string>("mSquarePaymentsSheetName") ?? "M Square_payments";
     this.sellersSheetName = "Sellers";
+    this.squareIdsSheetName =
+      this.config.get<string>("squareIdsSheetName") ?? "Square IDs";
     this.usersSheetName = this.config.get<string>("usersSheetName") ?? "users";
     this.lCashInSheetName =
       this.config.get<string>("lCashInSheetName") ?? "L CASH IN 🍻";
@@ -373,11 +376,11 @@ export class SheetsService {
   }
 
   /**
-   * Sellers tab: match Square payment `team_member_id` to the given team-ID column only
-   * (`Square_team_ID` or `M Square_team_ID`), return `seller_id` for the payment row.
-   * Email is never used for this lookup.
+   * Square IDs tab (`user_id`, `email`, `Square_team_ID`, `M Square_team_ID`):
+   * Match payment `team_member_id` to the given team column only; return `user_id`
+   * (seller code written as Seller ID on Square payment rows). Email is not used for matching.
    */
-  async getSellerIdFromSellersByTeamMemberId(
+  async getSellerIdFromSquareIdsByTeamMember(
     teamMemberId: string,
     teamColumnHeader: "Square_team_ID" | "M Square_team_ID"
   ): Promise<number | null> {
@@ -385,22 +388,23 @@ export class SheetsService {
     if (normalizedTeam === "") return null;
 
     const client = await this.getSheetsClient();
+    const rangePrefix = a1SheetRangePrefix(this.squareIdsSheetName);
     const response = await client.spreadsheets.values.get({
       spreadsheetId: this.spreadsheetId,
-      range: `${this.sellersSheetName}!A:Z`,
+      range: `${rangePrefix}A:Z`,
     });
     const values = response.data.values ?? [];
     if (values.length === 0) return null;
 
     const header = values[0]?.map((v) => String(v).trim()) ?? [];
     const normHeader = (h: string) => h.toLowerCase().replace(/\s+/g, "_");
+    const userIdIdx = header.findIndex((h) => normHeader(h) === "user_id");
     const teamIdx = header.findIndex(
       (h) => normHeader(h) === normHeader(teamColumnHeader)
     );
-    const sellerIdx = header.findIndex((h) => normHeader(h) === "seller_id");
-    if (teamIdx < 0 || sellerIdx < 0) {
+    if (userIdIdx < 0 || teamIdx < 0) {
       throw new Error(
-        `Sellers tab must include '${teamColumnHeader}' and 'seller_id' headers`
+        `Square IDs tab must include 'user_id' and '${teamColumnHeader}' headers (sheet: "${this.squareIdsSheetName}")`
       );
     }
 
@@ -408,19 +412,18 @@ export class SheetsService {
       const row = values[i] ?? [];
       const teamCell = normalizeSquareTeamMemberId(row[teamIdx]);
       if (teamCell !== normalizedTeam) continue;
-      return parseSellerIdInteger(row[sellerIdx]);
+      return parseSellerIdInteger(row[userIdIdx]);
     }
     return null;
   }
 
   /**
-   * Sellers tab: match `Square_team_ID` to Square payment `team_member_id`,
-   * return the business `seller_id` column value for the payment row (not Square catalog IDs).
+   * Square IDs tab: match `Square_team_ID` to payment `team_member_id`, return `user_id`.
    */
   async getSellerIdBySquareTeamMemberId(
     teamMemberId: string
   ): Promise<number | null> {
-    return this.getSellerIdFromSellersByTeamMemberId(
+    return this.getSellerIdFromSquareIdsByTeamMember(
       teamMemberId,
       "Square_team_ID"
     );
