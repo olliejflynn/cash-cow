@@ -337,9 +337,6 @@ function parseCashCommand(text: string): CashParseResult | null {
   if (!Number.isFinite(n)) {
     return { ok: false, error: "Amount is not a valid number." };
   }
-  if (n < 0) {
-    return { ok: false, error: "Amount cannot be negative." };
-  }
   return { ok: true, sellerCode, explicitAmount: n };
 }
 
@@ -369,7 +366,7 @@ function parseCashConfirmCallbackData(
     return { sellerCode };
   }
   const n = parseFloat(token.replace(/,/g, ""));
-  if (!Number.isFinite(n) || n < 0) return null;
+  if (!Number.isFinite(n)) return null;
   return { sellerCode, explicitAmount: n };
 }
 

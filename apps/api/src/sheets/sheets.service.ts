@@ -686,9 +686,6 @@ export class SheetsService {
     if (!Number.isFinite(amountUsed)) {
       throw new Error("Amount is not a valid number.");
     }
-    if (amountUsed < 0) {
-      throw new Error("Amount cannot be negative.");
-    }
     const newOutstanding =
       ctx.lCashE + ctx.mCashE + ctx.currentOutstanding - amountUsed;
     return {
@@ -724,9 +721,6 @@ export class SheetsService {
       explicitAmount === undefined ? ctx.lCashE + ctx.mCashE : explicitAmount;
     if (!Number.isFinite(amountUsed)) {
       throw new Error("Amount is not a valid number.");
-    }
-    if (amountUsed < 0) {
-      throw new Error("Amount cannot be negative.");
     }
     const newOutstanding =
       ctx.lCashE + ctx.mCashE + ctx.currentOutstanding - amountUsed;
