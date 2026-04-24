@@ -4,6 +4,15 @@ import { google, sheets_v4 } from "googleapis";
 import type { SalesLogRow } from "../webhook/sales-log.types";
 import type { SquarePaymentRow } from "../webhook/square-payment.types";
 
+/** Orders created before this instant (UTC) are not appended to Sales_Log. */
+const SALES_LOG_ORDER_CREATED_CUTOFF_MS = Date.UTC(2026, 3, 1, 0, 0, 0, 0);
+
+function isOrderCreatedAtEligibleForSalesLog(orderCreatedAt: string): boolean {
+  const ms = Date.parse(orderCreatedAt);
+  if (!Number.isFinite(ms)) return false;
+  return ms >= SALES_LOG_ORDER_CREATED_CUTOFF_MS;
+}
+
 const SALES_LOG_COLUMNS: (keyof SalesLogRow)[] = [
   "logged_at",
   "order_created_at",
@@ -172,12 +181,40 @@ export class SheetsService {
   /**
    * Append Sales_Log rows to the configured spreadsheet.
    * Each row is written in the order of Sales_Log columns.
+   * Rows whose `order_created_at` is before April 2026 (UTC) are dropped so
+   * stale WooCommerce webhook replays do not pollute the sheet.
    */
   async appendSalesLogRows(rows: SalesLogRow[]): Promise<void> {
-    if (rows.length === 0) return;
+    const eligible = rows.filter((row) =>
+      isOrderCreatedAtEligibleForSalesLog(row.order_created_at)
+    );
+    if (eligible.length === 0) {
+      if (rows.length > 0) {
+        const first = rows[0];
+        console.log(
+          "[SheetsService] Skipping Sales_Log append (order_created_at before April 2026 UTC)",
+          JSON.stringify({
+            order_id: first?.order_id,
+            order_created_at: first?.order_created_at,
+            dropped_rows: rows.length,
+          })
+        );
+      }
+      return;
+    }
+    if (eligible.length < rows.length) {
+      console.log(
+        "[SheetsService] Sales_Log append: dropped some rows before April 2026 UTC",
+        JSON.stringify({
+          order_id: rows[0]?.order_id,
+          kept: eligible.length,
+          dropped: rows.length - eligible.length,
+        })
+      );
+    }
 
     const client = await this.getSheetsClient();
-    const values = rows.map((row) =>
+    const values = eligible.map((row) =>
       SALES_LOG_COLUMNS.map((key) => row[key] ?? "")
     );
 
