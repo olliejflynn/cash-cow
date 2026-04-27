@@ -12,6 +12,7 @@ import type {
   SellerCashInApplyResult,
   SellerCashInPreview,
   SellerCashInRow,
+  SellerEmailRow,
   SellerOutstandingRow,
 } from "../sheets/sheets.service";
 import { SheetsService } from "../sheets/sheets.service";
@@ -240,10 +241,12 @@ export class TelegramWebhookController {
   ): Promise<void> {
     let rows: SellerCashInRow[];
     let outstandingRows: SellerOutstandingRow[];
+    let emailRows: SellerEmailRow[];
     try {
-      [rows, outstandingRows] = await Promise.all([
+      [rows, outstandingRows, emailRows] = await Promise.all([
         this.sheetsService.getAllSellersCashInFromSheets(),
         this.sheetsService.getAllOutstandingBalances(),
+        this.sheetsService.getSellerEmailRows(),
       ]);
     } catch (err: unknown) {
       const msg =
@@ -258,6 +261,9 @@ export class TelegramWebhookController {
 
     const outstandingBySeller = new Map<string, number>(
       outstandingRows.map((r) => [r.sellerCode, r.outstanding])
+    );
+    const emailBySeller = new Map<string, string>(
+      emailRows.map((r) => [r.sellerCode, r.email])
     );
 
     if (rows.length === 0 && outstandingBySeller.size === 0) {
@@ -282,17 +288,23 @@ export class TelegramWebhookController {
       const m = row?.m.sumE ?? 0;
       await telegramSendMessage(token, {
         chat_id: chatId,
-        text: toMonospaceBlock(formatSingleSellerBalance(l, m, outstanding)),
-        parse_mode: "Markdown",
+        text: formatSingleSellerBalanceHtml({
+          sellerCode,
+          email: emailBySeller.get(sellerCode) ?? "",
+          l,
+          m,
+          outstanding,
+        }),
+        parse_mode: "HTML",
       });
       return;
     }
 
-    const table = formatAllBalancesTable(rows, outstandingBySeller);
+    const table = formatAllBalancesHtml(rows, outstandingBySeller, emailBySeller);
     await telegramSendMessage(token, {
       chat_id: chatId,
-      text: toMonospaceBlock(table),
-      parse_mode: "Markdown",
+      text: table,
+      parse_mode: "HTML",
     });
   }
 }
@@ -471,24 +483,34 @@ function parseBalanceCommand(text: string): { sellerCode: string | null } | null
 
 function formatMoney(n: number): string {
   return n.toLocaleString("en-GB", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
   });
 }
 
-function formatSingleSellerBalance(l: number, m: number, outstanding: number): string {
+function formatSingleSellerBalanceHtml(input: {
+  sellerCode: string;
+  email: string;
+  l: number;
+  m: number;
+  outstanding: number;
+}): string {
+  const { sellerCode, email, l, m, outstanding } = input;
   const total = l + m;
-  return (
-    `L: ${formatMoney(l)}\n` +
-    `M: ${formatMoney(m)}\n\n` +
-    `Total: *${formatMoney(total)}*\n` +
-    `Outstanding: ${formatMoney(outstanding)}`
-  );
+  const title = `${sellerCode} | ${email || "-"}`;
+  return `CASH IN 💰\n\n${formatSellerCashSectionHtml({
+    title,
+    l,
+    m,
+    outstanding,
+    total,
+  })}`;
 }
 
-function formatAllBalancesTable(
+function formatAllBalancesHtml(
   rows: SellerCashInRow[],
-  outstandingBySeller: Map<string, number>
+  outstandingBySeller: Map<string, number>,
+  emailBySeller: Map<string, string>
 ): string {
   const bySeller = new Map<
     string,
@@ -514,7 +536,9 @@ function formatAllBalancesTable(
 
   const items = [...bySeller.entries()]
     .map(([code, v]) => ({
-      code: truncateSellerCode(code),
+      code,
+      shortCode: truncateSellerCode(code),
+      email: emailBySeller.get(code) ?? "",
       l: v.l,
       m: v.m,
       total: v.total,
@@ -526,38 +550,41 @@ function formatAllBalancesTable(
     return "No sellers with valid seller codes were found.";
   }
 
-  const codeWidth = 4;
   const lWidth = Math.max(
-    1,
+    "L Cash in 🎤".length,
     ...items.map((item) => formatMoney(item.l).length),
-    "L".length
   );
   const mWidth = Math.max(
-    1,
+    "M Cash in 👑".length,
     ...items.map((item) => formatMoney(item.m).length),
-    "M".length
   );
   const totalWidth = Math.max(
-    5,
+    "Total".length,
     ...items.map((item) => formatMoney(item.total).length),
-    "Total".length
   );
   const outWidth = Math.max(
-    1,
+    "Outstanding ‼️".length,
     ...items.map((item) => formatMoney(item.outstanding).length),
-    "Out".length
   );
 
-  const lines = [
-    `${"Code".padEnd(codeWidth, " ")}  ${"L".padStart(lWidth, " ")}  ${"M".padStart(mWidth, " ")}  ${"Total".padStart(totalWidth, " ")}  ${"Out".padStart(outWidth, " ")}`,
-    `${"-".repeat(codeWidth)}  ${"-".repeat(lWidth)}  ${"-".repeat(mWidth)}  ${"-".repeat(totalWidth)}  ${"-".repeat(outWidth)}`,
-  ];
-  for (const item of items) {
-    lines.push(
-      `${item.code.padEnd(codeWidth, " ")}  ${formatMoney(item.l).padStart(lWidth, " ")}  ${formatMoney(item.m).padStart(mWidth, " ")}  ${formatMoney(item.total).padStart(totalWidth, " ")}  ${formatMoney(item.outstanding).padStart(outWidth, " ")}`
-    );
-  }
-  return lines.join("\n");
+  const sections = items.map((item) => {
+    const title = `${item.shortCode} | ${item.email || "-"}`;
+    return formatSellerCashSectionHtml({
+      title,
+      l: item.l,
+      m: item.m,
+      outstanding: item.outstanding,
+      total: item.total,
+      widths: {
+        l: lWidth,
+        m: mWidth,
+        outstanding: outWidth,
+        total: totalWidth,
+      },
+    });
+  });
+
+  return `CASH IN 💰\n\n${sections.join("\n\n")}`;
 }
 
 function truncateSellerCode(normalizedSellerCode: string): string {
@@ -568,9 +595,48 @@ function normalizeSellerCode(value: string): string {
   return String(value ?? "").replace(/\D/g, "");
 }
 
-function toMonospaceBlock(text: string): string {
-  // Telegram Markdown: wrap in triple backticks so columns stay aligned.
-  return `\`\`\`\n${text}\n\`\`\``;
+function formatSellerCashSectionHtml(input: {
+  title: string;
+  l: number;
+  m: number;
+  outstanding: number;
+  total: number;
+  widths?: {
+    l: number;
+    m: number;
+    outstanding: number;
+    total: number;
+  };
+}): string {
+  const widths = input.widths ?? {
+    l: "L Cash in 🎤".length,
+    m: "M Cash in 👑".length,
+    outstanding: "Outstanding ‼️".length,
+    total: "Total".length,
+  };
+  const header =
+    `${"L Cash in 🎤".padStart(widths.l, " ")} | ` +
+    `${"M Cash in 👑".padStart(widths.m, " ")} | ` +
+    `${"Outstanding ‼️".padStart(widths.outstanding, " ")} | ` +
+    `${"Total".padStart(widths.total, " ")}`;
+  const values =
+    `${formatMoney(input.l).padStart(widths.l, " ")} | ` +
+    `${formatMoney(input.m).padStart(widths.m, " ")} | ` +
+    `${formatMoney(input.outstanding).padStart(widths.outstanding, " ")} | ` +
+    `${formatMoney(input.total).padStart(widths.total, " ")}`;
+
+  return (
+    `<u>${escapeHtml(input.title)}</u>\n` +
+    `<pre>${escapeHtml(header)}\n${escapeHtml(values)}</pre>`
+  );
+}
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }
 
 async function telegramAnswerCallbackQuery(

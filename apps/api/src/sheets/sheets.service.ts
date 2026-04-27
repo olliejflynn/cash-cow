@@ -89,6 +89,12 @@ export type SellerOutstandingRow = {
   outstanding: number;
 };
 
+/** Seller code -> email map from Square IDs tab headers user_id/email. */
+export type SellerEmailRow = {
+  sellerCode: string;
+  email: string;
+};
+
 @Injectable()
 export class SheetsService {
   private sheets: sheets_v4.Sheets | null = null;
@@ -669,6 +675,28 @@ export class SheetsService {
     });
     const values = response.data.values ?? [];
     return parseAllOutstandingRows(values);
+  }
+
+  /** Read seller code/email rows from Square IDs tab (`user_id`, `email`). */
+  async getSellerEmailRows(): Promise<SellerEmailRow[]> {
+    const client = await this.getSheetsClient();
+    const spreadsheetId = this.spreadsheetId.trim();
+    if (spreadsheetId === "") {
+      throw new Error("SPREADSHEET_ID is not set");
+    }
+    const title = await this.resolveSheetTitleForConfiguredTab(
+      client,
+      spreadsheetId,
+      this.squareIdsSheetName,
+      "Check SQUARE_IDS_SHEET_NAME."
+    );
+    const range = `${a1SheetRangePrefix(title)}A:Z`;
+    const response = await client.spreadsheets.values.get({
+      spreadsheetId,
+      range,
+    });
+    const values = response.data.values ?? [];
+    return parseSellerEmailRows(values);
   }
 
   private async resolveSheetTitleForConfiguredTab(
@@ -1340,6 +1368,29 @@ function parseAllOutstandingRows(values: unknown[][]): SellerOutstandingRow[] {
       sellerCode,
       outstanding: parseSheetMoneyNumber(row[idxOut]),
     });
+  }
+  return out;
+}
+
+function parseSellerEmailRows(values: unknown[][]): SellerEmailRow[] {
+  if (values.length === 0) return [];
+  const header = values[0] ?? [];
+  const userIdIdx = header.findIndex(
+    (c) => normSheetHeader(String(c ?? "")) === "user_id"
+  );
+  const emailIdx = header.findIndex(
+    (c) => normSheetHeader(String(c ?? "")) === "email"
+  );
+  if (userIdIdx < 0 || emailIdx < 0) {
+    return [];
+  }
+  const out: SellerEmailRow[] = [];
+  for (let i = 1; i < values.length; i++) {
+    const row = values[i] ?? [];
+    const sellerCode = normalizeCashInSellerDigits(String(row[userIdIdx] ?? ""));
+    if (sellerCode === "") continue;
+    const email = String(row[emailIdx] ?? "").trim();
+    out.push({ sellerCode, email });
   }
   return out;
 }
