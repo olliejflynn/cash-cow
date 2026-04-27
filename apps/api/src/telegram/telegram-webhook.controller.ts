@@ -498,12 +498,14 @@ function formatSingleSellerBalanceHtml(input: {
   const { sellerCode, email, l, m, outstanding } = input;
   const total = l + m + outstanding;
   const title = `${sellerCode} | ${email || "-"}`;
+  const widths = computeBalanceGridWidths([{ l, m, outstanding, total }]);
   return `CASH IN 💰\n\n${formatSellerCashSectionHtml({
     title,
     l,
     m,
     outstanding,
     total,
+    widths,
   })}`;
 }
 
@@ -551,21 +553,13 @@ function formatAllBalancesHtml(
     return "No sellers with valid seller codes were found.";
   }
 
-  const lWidth = Math.max(
-    "L 🎤".length,
-    ...items.map((item) => formatMoney(item.l).length),
-  );
-  const mWidth = Math.max(
-    "M 👑".length,
-    ...items.map((item) => formatMoney(item.m).length),
-  );
-  const totalWidth = Math.max(
-    "Total".length,
-    ...items.map((item) => formatMoney(item.total).length),
-  );
-  const outWidth = Math.max(
-    "Out ⚠️".length,
-    ...items.map((item) => formatMoney(item.outstanding).length),
+  const widths = computeBalanceGridWidths(
+    items.map((item) => ({
+      l: item.l,
+      m: item.m,
+      outstanding: item.outstanding,
+      total: item.total,
+    })),
   );
 
   const sections = items.map((item) => {
@@ -576,12 +570,7 @@ function formatAllBalancesHtml(
       m: item.m,
       outstanding: item.outstanding,
       total: item.total,
-      widths: {
-        l: lWidth,
-        m: mWidth,
-        outstanding: outWidth,
-        total: totalWidth,
-      },
+      widths,
     });
   });
 
@@ -602,34 +591,45 @@ function formatSellerCashSectionHtml(input: {
   m: number;
   outstanding: number;
   total: number;
-  widths?: {
+  widths: {
     l: number;
     m: number;
     outstanding: number;
     total: number;
   };
 }): string {
-  const widths = input.widths ?? {
-    l: "L Cash in 🎤".length,
-    m: "M 👑".length,
-    outstanding: "Out ⚠️".length,
-    total: "TOTAL ✅".length,
-  };
   const header =
-    `${"L 🎤".padStart(widths.l, " ")} | ` +
-    `${"M 👑".padStart(widths.m, " ")} | ` +
-    `${"Out ⚠️".padStart(widths.outstanding, " ")} | ` +
-    `${"TOTAL ✅".padStart(widths.total, " ")}`;
+    `${"L 🎤".padStart(input.widths.l, " ")} | ` +
+    `${"M 👑".padStart(input.widths.m, " ")} | ` +
+    `${"Out ⚠️".padStart(input.widths.outstanding, " ")} | ` +
+    `${"TOTAL ✅".padStart(input.widths.total, " ")}`;
   const values =
-    `${formatMoney(input.l).padStart(widths.l, " ")} | ` +
-    `${formatMoney(input.m).padStart(widths.m, " ")} | ` +
-    `${formatMoney(input.outstanding).padStart(widths.outstanding, " ")} | ` +
-    `${formatMoney(input.total).padStart(widths.total, " ")}`;
+    `${formatMoney(input.l).padStart(input.widths.l, " ")} | ` +
+    `${formatMoney(input.m).padStart(input.widths.m, " ")} | ` +
+    `${formatMoney(input.outstanding).padStart(input.widths.outstanding, " ")} | ` +
+    `${formatMoney(input.total).padStart(input.widths.total, " ")}`;
 
   return (
     `<u>${escapeHtml(input.title)}</u>\n` +
     `<pre>${escapeHtml(header)}\n${escapeHtml(values)}</pre>`
   );
+}
+
+function computeBalanceGridWidths(
+  rows: Array<{ l: number; m: number; outstanding: number; total: number }>,
+): { l: number; m: number; outstanding: number; total: number } {
+  return {
+    l: Math.max("L 🎤".length, ...rows.map((row) => formatMoney(row.l).length)),
+    m: Math.max("M 👑".length, ...rows.map((row) => formatMoney(row.m).length)),
+    outstanding: Math.max(
+      "Out ⚠️".length,
+      ...rows.map((row) => formatMoney(row.outstanding).length),
+    ),
+    total: Math.max(
+      "TOTAL ✅".length,
+      ...rows.map((row) => formatMoney(row.total).length),
+    ),
+  };
 }
 
 function escapeHtml(s: string): string {
