@@ -551,11 +551,11 @@ function formatAllBalancesHtml(
   }
 
   const lWidth = Math.max(
-    "L Cash in 🎤".length,
+    "L 🎤".length,
     ...items.map((item) => formatMoney(item.l).length),
   );
   const mWidth = Math.max(
-    "M Cash in 👑".length,
+    "M 👑".length,
     ...items.map((item) => formatMoney(item.m).length),
   );
   const totalWidth = Math.max(
@@ -563,7 +563,7 @@ function formatAllBalancesHtml(
     ...items.map((item) => formatMoney(item.total).length),
   );
   const outWidth = Math.max(
-    "Outstanding ‼️".length,
+    "Out ⚠️".length,
     ...items.map((item) => formatMoney(item.outstanding).length),
   );
 
@@ -610,15 +610,15 @@ function formatSellerCashSectionHtml(input: {
 }): string {
   const widths = input.widths ?? {
     l: "L Cash in 🎤".length,
-    m: "M Cash in 👑".length,
-    outstanding: "Outstanding ‼️".length,
-    total: "Total".length,
+    m: "M 👑".length,
+    outstanding: "Out ⚠️".length,
+    total: "TOTAL ✅".length,
   };
   const header =
-    `${"L Cash in 🎤".padStart(widths.l, " ")} | ` +
-    `${"M Cash in 👑".padStart(widths.m, " ")} | ` +
-    `${"Outstanding ‼️".padStart(widths.outstanding, " ")} | ` +
-    `${"Total".padStart(widths.total, " ")}`;
+    `${"L 🎤".padStart(widths.l, " ")} | ` +
+    `${"M 👑".padStart(widths.m, " ")} | ` +
+    `${"Out ⚠️".padStart(widths.outstanding, " ")} | ` +
+    `${"TOTAL ✅".padStart(widths.total, " ")}`;
   const values =
     `${formatMoney(input.l).padStart(widths.l, " ")} | ` +
     `${formatMoney(input.m).padStart(widths.m, " ")} | ` +
