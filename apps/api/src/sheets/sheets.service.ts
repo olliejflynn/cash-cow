@@ -83,6 +83,12 @@ export type SellerCashInApplyResult = {
   squareRowsDeletedM: number;
 };
 
+/** Outstanding balance row keyed by seller code digits from Outstanding tab. */
+export type SellerOutstandingRow = {
+  sellerCode: string;
+  outstanding: number;
+};
+
 @Injectable()
 export class SheetsService {
   private sheets: sheets_v4.Sheets | null = null;
@@ -641,6 +647,28 @@ export class SheetsService {
       });
     }
     return out;
+  }
+
+  /** Read all outstanding balances from Outstanding tab headers Seller_Code / Outstanding. */
+  async getAllOutstandingBalances(): Promise<SellerOutstandingRow[]> {
+    const client = await this.getSheetsClient();
+    const spreadsheetId = this.spreadsheetId.trim();
+    if (spreadsheetId === "") {
+      throw new Error("SPREADSHEET_ID is not set");
+    }
+    const title = await this.resolveSheetTitleForConfiguredTab(
+      client,
+      spreadsheetId,
+      this.outstandingSheetName,
+      "Check OUTSTANDING_SHEET_NAME."
+    );
+    const range = `${a1SheetRangePrefix(title)}A:B`;
+    const response = await client.spreadsheets.values.get({
+      spreadsheetId,
+      range,
+    });
+    const values = response.data.values ?? [];
+    return parseAllOutstandingRows(values);
   }
 
   private async resolveSheetTitleForConfiguredTab(
@@ -1287,6 +1315,33 @@ function parseOutstandingForSeller(
     };
   }
   return { currentOutstanding: 0, row1Based: null };
+}
+
+function parseAllOutstandingRows(values: unknown[][]): SellerOutstandingRow[] {
+  if (values.length === 0) return [];
+  const headerRow = values[0] ?? [];
+  const idxSeller = headerRow.findIndex(
+    (c) => normSheetHeader(String(c ?? "")) === "seller_code"
+  );
+  const idxOut = headerRow.findIndex(
+    (c) => normSheetHeader(String(c ?? "")) === "outstanding"
+  );
+  if (idxSeller < 0 || idxOut < 0) {
+    throw new Error(
+      'Outstanding tab row 1 must include headers "Seller_Code" and "Outstanding".'
+    );
+  }
+  const out: SellerOutstandingRow[] = [];
+  for (let i = 1; i < values.length; i++) {
+    const row = values[i] ?? [];
+    const sellerCode = normalizeCashInSellerDigits(String(row[idxSeller] ?? ""));
+    if (sellerCode === "") continue;
+    out.push({
+      sellerCode,
+      outstanding: parseSheetMoneyNumber(row[idxOut]),
+    });
+  }
+  return out;
 }
 
 function countSalesLogRowsForSeller(

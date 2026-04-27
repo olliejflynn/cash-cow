@@ -8,7 +8,12 @@ import {
 } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import type { Request } from "express";
-import type { SellerCashInApplyResult, SellerCashInPreview, SellerCashInRow } from "../sheets/sheets.service";
+import type {
+  SellerCashInApplyResult,
+  SellerCashInPreview,
+  SellerCashInRow,
+  SellerOutstandingRow,
+} from "../sheets/sheets.service";
 import { SheetsService } from "../sheets/sheets.service";
 
 const HELP_REPLY =
@@ -234,8 +239,12 @@ export class TelegramWebhookController {
     sellerCode: string | null
   ): Promise<void> {
     let rows: SellerCashInRow[];
+    let outstandingRows: SellerOutstandingRow[];
     try {
-      rows = await this.sheetsService.getAllSellersCashInFromSheets();
+      [rows, outstandingRows] = await Promise.all([
+        this.sheetsService.getAllSellersCashInFromSheets(),
+        this.sheetsService.getAllOutstandingBalances(),
+      ]);
     } catch (err: unknown) {
       const msg =
         err instanceof Error ? err.message : "Unknown error loading sheets.";
@@ -247,32 +256,39 @@ export class TelegramWebhookController {
       return;
     }
 
-    if (rows.length === 0) {
+    const outstandingBySeller = new Map<string, number>(
+      outstandingRows.map((r) => [r.sellerCode, r.outstanding])
+    );
+
+    if (rows.length === 0 && outstandingBySeller.size === 0) {
       await telegramSendMessage(token, {
         chat_id: chatId,
-        text: "No sellers found on the L/M cash-in tabs.",
+        text: "No sellers found on cash-in or outstanding tabs.",
       });
       return;
     }
 
     if (sellerCode != null) {
       const row = rows.find((r) => normalizeSellerCode(r.sellerId) === sellerCode);
-      if (row == null) {
+      const outstanding = outstandingBySeller.get(sellerCode) ?? 0;
+      if (row == null && outstanding === 0) {
         await telegramSendMessage(token, {
           chat_id: chatId,
           text: `Seller ${sellerCode} was not found.`,
         });
         return;
       }
+      const l = row?.l.sumE ?? 0;
+      const m = row?.m.sumE ?? 0;
       await telegramSendMessage(token, {
         chat_id: chatId,
-        text: formatSingleSellerBalance(row),
+        text: formatSingleSellerBalance(l, m, outstanding),
         parse_mode: "Markdown",
       });
       return;
     }
 
-    const table = formatAllBalancesTable(rows);
+    const table = formatAllBalancesTable(rows, outstandingBySeller);
     await telegramSendMessage(token, {
       chat_id: chatId,
       text: table,
@@ -459,32 +475,49 @@ function formatMoney(n: number): string {
   });
 }
 
-function formatSingleSellerBalance(row: SellerCashInRow): string {
-  const l = row.l.sumE;
-  const m = row.m.sumE;
+function formatSingleSellerBalance(l: number, m: number, outstanding: number): string {
   const total = l + m;
   return (
     `L: ${formatMoney(l)}\n` +
     `M: ${formatMoney(m)}\n\n` +
-    `Total: *${formatMoney(total)}*`
+    `Total: *${formatMoney(total)}*\n` +
+    `Outstanding: ${formatMoney(outstanding)}`
   );
 }
 
-function formatAllBalancesTable(rows: SellerCashInRow[]): string {
-  const items = rows
-    .map((row) => {
-      const normalizedCode = normalizeSellerCode(row.sellerId);
-      const l = row.l.sumE;
-      const m = row.m.sumE;
-      const total = l + m;
-      return { normalizedCode, l, m, total };
-    })
-    .filter((item) => item.normalizedCode !== "")
-    .map((item) => ({
-      code: truncateSellerCode(item.normalizedCode),
-      l: item.l,
-      m: item.m,
-      total: item.total,
+function formatAllBalancesTable(
+  rows: SellerCashInRow[],
+  outstandingBySeller: Map<string, number>
+): string {
+  const bySeller = new Map<
+    string,
+    { l: number; m: number; outstanding: number; total: number }
+  >();
+  for (const row of rows) {
+    const code = normalizeSellerCode(row.sellerId);
+    if (code === "") continue;
+    const l = row.l.sumE;
+    const m = row.m.sumE;
+    const total = l + m;
+    bySeller.set(code, {
+      l,
+      m,
+      total,
+      outstanding: outstandingBySeller.get(code) ?? 0,
+    });
+  }
+  for (const [code, outstanding] of outstandingBySeller.entries()) {
+    if (code === "" || bySeller.has(code)) continue;
+    bySeller.set(code, { l: 0, m: 0, total: 0, outstanding });
+  }
+
+  const items = [...bySeller.entries()]
+    .map(([code, v]) => ({
+      code: truncateSellerCode(code),
+      l: v.l,
+      m: v.m,
+      total: v.total,
+      outstanding: v.outstanding,
     }))
     .sort((a, b) => b.total - a.total);
 
@@ -508,14 +541,19 @@ function formatAllBalancesTable(rows: SellerCashInRow[]): string {
     ...items.map((item) => formatMoney(item.total).length),
     "Total".length
   );
+  const outWidth = Math.max(
+    1,
+    ...items.map((item) => formatMoney(item.outstanding).length),
+    "Out".length
+  );
 
   const lines = [
-    `${"Code".padEnd(codeWidth, " ")}  ${"L".padStart(lWidth, " ")}  ${"M".padStart(mWidth, " ")}  ${"Total".padStart(totalWidth, " ")}`,
-    `${"-".repeat(codeWidth)}  ${"-".repeat(lWidth)}  ${"-".repeat(mWidth)}  ${"-".repeat(totalWidth)}`,
+    `${"Code".padEnd(codeWidth, " ")}  ${"L".padStart(lWidth, " ")}  ${"M".padStart(mWidth, " ")}  ${"Total".padStart(totalWidth, " ")}  ${"Out".padStart(outWidth, " ")}`,
+    `${"-".repeat(codeWidth)}  ${"-".repeat(lWidth)}  ${"-".repeat(mWidth)}  ${"-".repeat(totalWidth)}  ${"-".repeat(outWidth)}`,
   ];
   for (const item of items) {
     lines.push(
-      `${item.code.padEnd(codeWidth, " ")}  ${formatMoney(item.l).padStart(lWidth, " ")}  ${formatMoney(item.m).padStart(mWidth, " ")}  ${formatMoney(item.total).padStart(totalWidth, " ")}`
+      `${item.code.padEnd(codeWidth, " ")}  ${formatMoney(item.l).padStart(lWidth, " ")}  ${formatMoney(item.m).padStart(mWidth, " ")}  ${formatMoney(item.total).padStart(totalWidth, " ")}  ${formatMoney(item.outstanding).padStart(outWidth, " ")}`
     );
   }
   return lines.join("\n");
