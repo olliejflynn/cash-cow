@@ -474,12 +474,16 @@ function formatAllBalancesTable(rows: SellerCashInRow[]): string {
   const items = rows
     .map((row) => {
       const normalizedCode = normalizeSellerCode(row.sellerId);
-      const total = row.l.sumE + row.m.sumE;
-      return { normalizedCode, total };
+      const l = row.l.sumE;
+      const m = row.m.sumE;
+      const total = l + m;
+      return { normalizedCode, l, m, total };
     })
     .filter((item) => item.normalizedCode !== "")
     .map((item) => ({
       code: truncateSellerCode(item.normalizedCode),
+      l: item.l,
+      m: item.m,
       total: item.total,
     }))
     .sort((a, b) => b.total - a.total);
@@ -489,19 +493,29 @@ function formatAllBalancesTable(rows: SellerCashInRow[]): string {
   }
 
   const codeWidth = 4;
-  const amountWidth = Math.max(
+  const lWidth = Math.max(
+    1,
+    ...items.map((item) => formatMoney(item.l).length),
+    "L".length
+  );
+  const mWidth = Math.max(
+    1,
+    ...items.map((item) => formatMoney(item.m).length),
+    "M".length
+  );
+  const totalWidth = Math.max(
     5,
     ...items.map((item) => formatMoney(item.total).length),
     "Total".length
   );
 
   const lines = [
-    `${"Code".padEnd(codeWidth, " ")}  ${"Total".padStart(amountWidth, " ")}`,
-    `${"-".repeat(codeWidth)}  ${"-".repeat(amountWidth)}`,
+    `${"Code".padEnd(codeWidth, " ")}  ${"L".padStart(lWidth, " ")}  ${"M".padStart(mWidth, " ")}  ${"Total".padStart(totalWidth, " ")}`,
+    `${"-".repeat(codeWidth)}  ${"-".repeat(lWidth)}  ${"-".repeat(mWidth)}  ${"-".repeat(totalWidth)}`,
   ];
   for (const item of items) {
     lines.push(
-      `${item.code.padEnd(codeWidth, " ")}  ${formatMoney(item.total).padStart(amountWidth, " ")}`
+      `${item.code.padEnd(codeWidth, " ")}  ${formatMoney(item.l).padStart(lWidth, " ")}  ${formatMoney(item.m).padStart(mWidth, " ")}  ${formatMoney(item.total).padStart(totalWidth, " ")}`
     );
   }
   return lines.join("\n");
