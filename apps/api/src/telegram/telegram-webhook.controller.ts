@@ -499,7 +499,7 @@ function formatSingleSellerBalanceHtml(input: {
   const total = l + m + outstanding;
   const title = `${sellerCode} | ${email || "-"}`;
   const widths = computeBalanceGridWidths([{ l, m, outstanding, total }]);
-  return `CASH IN 💰\n\n${formatSellerCashSectionHtml({
+  return `CASH IN\n\n${formatSellerCashSectionHtml({
     title,
     l,
     m,
@@ -574,7 +574,7 @@ function formatAllBalancesHtml(
     });
   });
 
-  return `CASH IN 💰\n\n${sections.join("\n\n")}`;
+  return `CASH IN\n\n${sections.join("\n\n")}`;
 }
 
 function truncateSellerCode(normalizedSellerCode: string): string {
@@ -599,10 +599,10 @@ function formatSellerCashSectionHtml(input: {
   };
 }): string {
   const header =
-    `${"L 🎤".padStart(input.widths.l, " ")} | ` +
-    `${"M 👑".padStart(input.widths.m, " ")} | ` +
-    `${"Out ⚠️".padStart(input.widths.outstanding, " ")} | ` +
-    `${"TOTAL ✅".padStart(input.widths.total, " ")}`;
+    `${"L".padStart(input.widths.l, " ")} | ` +
+    `${"M".padStart(input.widths.m, " ")} | ` +
+    `${"OUT".padStart(input.widths.outstanding, " ")} | ` +
+    `${"TOTAL".padStart(input.widths.total, " ")}`;
   const values =
     `${formatMoney(input.l).padStart(input.widths.l, " ")} | ` +
     `${formatMoney(input.m).padStart(input.widths.m, " ")} | ` +
@@ -619,14 +619,14 @@ function computeBalanceGridWidths(
   rows: Array<{ l: number; m: number; outstanding: number; total: number }>,
 ): { l: number; m: number; outstanding: number; total: number } {
   return {
-    l: Math.max("L 🎤".length, ...rows.map((row) => formatMoney(row.l).length)),
-    m: Math.max("M 👑".length, ...rows.map((row) => formatMoney(row.m).length)),
+    l: Math.max("L".length, ...rows.map((row) => formatMoney(row.l).length)),
+    m: Math.max("M".length, ...rows.map((row) => formatMoney(row.m).length)),
     outstanding: Math.max(
-      "Out ⚠️".length,
+      "OUT".length,
       ...rows.map((row) => formatMoney(row.outstanding).length),
     ),
     total: Math.max(
-      "TOTAL ✅".length,
+      "TOTAL".length,
       ...rows.map((row) => formatMoney(row.total).length),
     ),
   };
