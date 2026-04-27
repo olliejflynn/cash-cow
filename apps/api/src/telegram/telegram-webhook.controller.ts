@@ -496,7 +496,7 @@ function formatSingleSellerBalanceHtml(input: {
   outstanding: number;
 }): string {
   const { sellerCode, email, l, m, outstanding } = input;
-  const total = l + m;
+  const total = l + m + outstanding;
   const title = `${sellerCode} | ${email || "-"}`;
   return `CASH IN 💰\n\n${formatSellerCashSectionHtml({
     title,
@@ -521,17 +521,18 @@ function formatAllBalancesHtml(
     if (code === "") continue;
     const l = row.l.sumE;
     const m = row.m.sumE;
-    const total = l + m;
+    const outstanding = outstandingBySeller.get(code) ?? 0;
+    const total = l + m + outstanding;
     bySeller.set(code, {
       l,
       m,
       total,
-      outstanding: outstandingBySeller.get(code) ?? 0,
+      outstanding,
     });
   }
   for (const [code, outstanding] of outstandingBySeller.entries()) {
     if (code === "" || bySeller.has(code)) continue;
-    bySeller.set(code, { l: 0, m: 0, total: 0, outstanding });
+    bySeller.set(code, { l: 0, m: 0, total: outstanding, outstanding });
   }
 
   const items = [...bySeller.entries()]
