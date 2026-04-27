@@ -282,7 +282,7 @@ export class TelegramWebhookController {
       const m = row?.m.sumE ?? 0;
       await telegramSendMessage(token, {
         chat_id: chatId,
-        text: formatSingleSellerBalance(l, m, outstanding),
+        text: toMonospaceBlock(formatSingleSellerBalance(l, m, outstanding)),
         parse_mode: "Markdown",
       });
       return;
@@ -291,7 +291,8 @@ export class TelegramWebhookController {
     const table = formatAllBalancesTable(rows, outstandingBySeller);
     await telegramSendMessage(token, {
       chat_id: chatId,
-      text: table,
+      text: toMonospaceBlock(table),
+      parse_mode: "Markdown",
     });
   }
 }
@@ -565,6 +566,11 @@ function truncateSellerCode(normalizedSellerCode: string): string {
 
 function normalizeSellerCode(value: string): string {
   return String(value ?? "").replace(/\D/g, "");
+}
+
+function toMonospaceBlock(text: string): string {
+  // Telegram Markdown: wrap in triple backticks so columns stay aligned.
+  return `\`\`\`\n${text}\n\`\`\``;
 }
 
 async function telegramAnswerCallbackQuery(
