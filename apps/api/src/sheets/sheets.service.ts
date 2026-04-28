@@ -96,6 +96,31 @@ export type SellerEmailRow = {
   email: string;
 };
 
+export type SellerUncashedSaleBreakdownRow = {
+  orderId: string;
+  orderCreatedAt: string;
+  ticketTypeSlug: string;
+  ticketDisplayName: string;
+  qty: number;
+  unitPricePaid: number;
+  grossAmount: number;
+  grossCommission: number;
+  handInAmount: number;
+  categoryCompany: string;
+};
+
+export type SellerBreakdownResult = {
+  sellerCode: string;
+  sales: SellerUncashedSaleBreakdownRow[];
+  saleCount: number;
+  totalGross: number;
+  totalCommission: number;
+  totalHandIn: number;
+  cardTotalPrimary: number;
+  cardTotalM: number;
+  cardTotalCombined: number;
+};
+
 @Injectable()
 export class SheetsService {
   private sheets: sheets_v4.Sheets | null = null;
@@ -189,6 +214,75 @@ export class SheetsService {
       map.set(slug, commission);
     }
     return map;
+  }
+
+  async getSellerBreakdownFromSheets(
+    sellerCode: string
+  ): Promise<SellerBreakdownResult> {
+    const normalizedSellerCode = normalizeCashInSellerDigits(sellerCode);
+    if (normalizedSellerCode === "") {
+      throw new Error("Seller code must be digits only.");
+    }
+
+    const client = await this.getSheetsClient();
+    const spreadsheetId = this.spreadsheetId.trim();
+    if (spreadsheetId === "") {
+      throw new Error("SPREADSHEET_ID is not set");
+    }
+
+    const [salesRes, ticketRulesRes, primaryCardTotal, mCardTotal] =
+      await Promise.all([
+        client.spreadsheets.values.get({
+          spreadsheetId,
+          range: `${this.salesLogSheetName}!A:Z`,
+        }),
+        client.spreadsheets.values.get({
+          spreadsheetId,
+          range: `${this.ticketRulesSheetName}!A:C`,
+        }),
+        this.getSquareCardTotalForSeller(
+          client,
+          spreadsheetId,
+          this.squarePaymentsSheetName,
+          normalizedSellerCode
+        ),
+        this.getSquareCardTotalForSeller(
+          client,
+          spreadsheetId,
+          this.mSquarePaymentsSheetName,
+          normalizedSellerCode
+        ),
+      ]);
+
+    const ticketDisplayBySlug = parseTicketDisplayNameBySlug(
+      ticketRulesRes.data.values ?? []
+    );
+    const sales = parseUncashedSalesRowsForSeller(
+      salesRes.data.values ?? [],
+      normalizedSellerCode,
+      ticketDisplayBySlug
+    );
+
+    let totalGross = 0;
+    let totalCommission = 0;
+    let totalHandIn = 0;
+    for (const sale of sales) {
+      totalGross += sale.grossAmount;
+      totalCommission += sale.grossCommission;
+      totalHandIn += sale.handInAmount;
+    }
+
+    return {
+      sellerCode: normalizedSellerCode,
+      sales,
+      saleCount: sales.length,
+      totalGross,
+      totalCommission,
+      totalHandIn,
+      cardTotalPrimary: primaryCardTotal,
+      cardTotalM: mCardTotal,
+      cardTotalCombined: primaryCardTotal + mCardTotal,
+    };
   }
 
   /**
@@ -1114,6 +1208,44 @@ export class SheetsService {
     return rowNumbers1Based.length;
   }
 
+  private async getSquareCardTotalForSeller(
+    client: sheets_v4.Sheets,
+    spreadsheetId: string,
+    sheetName: string,
+    sellerCode: string
+  ): Promise<number> {
+    const title = await this.resolveSheetTitleForConfiguredTab(
+      client,
+      spreadsheetId,
+      sheetName,
+      `Check sheet name for "${sheetName}".`
+    );
+    const response = await client.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${title}!A:F`,
+    });
+    const values = response.data.values ?? [];
+    if (values.length < 2) return 0;
+
+    const header = values[0]?.map((v) => String(v ?? "").trim()) ?? [];
+    const sellerIdx = header.findIndex(
+      (h) => normSheetHeader(h) === "seller_id"
+    );
+    const amountCentsIdx = header.findIndex(
+      (h) => normSheetHeader(h) === "amount_(cents)" || normSheetHeader(h) === "amount_cents"
+    );
+    if (sellerIdx < 0 || amountCentsIdx < 0) return 0;
+
+    let sumCents = 0;
+    for (let i = 1; i < values.length; i++) {
+      const row = values[i] ?? [];
+      if (!squareRowSellerMatches(row[sellerIdx], sellerCode)) continue;
+      const cents = parseAmountCentsInteger(row[amountCentsIdx]) ?? 0;
+      sumCents += cents;
+    }
+    return sumCents / 100;
+  }
+
   private async deleteSheetRowsBy1BasedIndices(
     client: sheets_v4.Sheets,
     spreadsheetId: string,
@@ -1411,6 +1543,122 @@ function parseSellerEmailRows(values: unknown[][]): SellerEmailRow[] {
     out.push({ sellerCode, email });
   }
   return out;
+}
+
+function parseTicketDisplayNameBySlug(values: unknown[][]): Map<string, string> {
+  const out = new Map<string, string>();
+  if (values.length === 0) return out;
+
+  const header = values[0]?.map((v) => String(v ?? "").trim()) ?? [];
+  const slugIdx = header.findIndex(
+    (h) => normSheetHeader(h) === "ticket_type_slug"
+  );
+  const displayIdx = header.findIndex(
+    (h) => normSheetHeader(h) === "display_name"
+  );
+  const idxSlug = slugIdx >= 0 ? slugIdx : 0;
+  const idxDisplay = displayIdx >= 0 ? displayIdx : 2;
+
+  for (let i = 1; i < values.length; i++) {
+    const row = values[i] ?? [];
+    const slug = String(row[idxSlug] ?? "").trim();
+    if (slug === "" || out.has(slug)) continue;
+    const displayName = String(row[idxDisplay] ?? "").trim();
+    out.set(slug, displayName === "" ? slug : displayName);
+  }
+  return out;
+}
+
+function parseUncashedSalesRowsForSeller(
+  values: unknown[][],
+  sellerCode: string,
+  ticketDisplayBySlug: ReadonlyMap<string, string>
+): SellerUncashedSaleBreakdownRow[] {
+  if (values.length < 2) return [];
+  const header = values[0]?.map((v) => String(v ?? "").trim()) ?? [];
+
+  const sellerIdx = header.findIndex(
+    (h) => normSheetHeader(h) === "seller_code"
+  );
+  const cashedIdx = header.findIndex((h) => normSheetHeader(h) === "cashed?");
+  const orderIdIdx = header.findIndex((h) => normSheetHeader(h) === "order_id");
+  const createdIdx = header.findIndex(
+    (h) => normSheetHeader(h) === "order_created_at"
+  );
+  const ticketTypeIdx = header.findIndex(
+    (h) => normSheetHeader(h) === "ticket_type"
+  );
+  const qtyIdx = header.findIndex((h) => normSheetHeader(h) === "qty");
+  const unitPricePaidIdx = header.findIndex(
+    (h) => normSheetHeader(h) === "unit_price_paid"
+  );
+  const grossAmountIdx = header.findIndex(
+    (h) => normSheetHeader(h) === "gross_amount"
+  );
+  const grossCommissionIdx = header.findIndex(
+    (h) => normSheetHeader(h) === "gross_commission"
+  );
+  const handInIdx = header.findIndex(
+    (h) => normSheetHeader(h) === "hand_in_amount"
+  );
+  const categoryIdx = header.findIndex(
+    (h) => normSheetHeader(h) === "category_(company)"
+  );
+
+  if (sellerIdx < 0 || cashedIdx < 0) {
+    throw new Error(
+      'Sales_Log must include headers "seller_code" and "cashed?".'
+    );
+  }
+
+  const out: SellerUncashedSaleBreakdownRow[] = [];
+  for (let i = 1; i < values.length; i++) {
+    const row = values[i] ?? [];
+    const rowSeller = normalizeCashInSellerDigits(String(row[sellerIdx] ?? ""));
+    if (rowSeller !== sellerCode) continue;
+    if (isTruthySheetCell(row[cashedIdx])) continue;
+
+    const ticketTypeSlug = String(
+      ticketTypeIdx >= 0 ? row[ticketTypeIdx] ?? "" : ""
+    ).trim();
+    const ticketDisplayName =
+      ticketDisplayBySlug.get(ticketTypeSlug) ?? ticketTypeSlug;
+    const qty = parseSheetMoneyNumber(qtyIdx >= 0 ? row[qtyIdx] : 0);
+
+    out.push({
+      orderId: String(orderIdIdx >= 0 ? row[orderIdIdx] ?? "" : "").trim(),
+      orderCreatedAt: String(createdIdx >= 0 ? row[createdIdx] ?? "" : "").trim(),
+      ticketTypeSlug,
+      ticketDisplayName,
+      qty,
+      unitPricePaid: parseSheetMoneyNumber(
+        unitPricePaidIdx >= 0 ? row[unitPricePaidIdx] : 0
+      ),
+      grossAmount: parseSheetMoneyNumber(
+        grossAmountIdx >= 0 ? row[grossAmountIdx] : 0
+      ),
+      grossCommission: parseSheetMoneyNumber(
+        grossCommissionIdx >= 0 ? row[grossCommissionIdx] : 0
+      ),
+      handInAmount: parseSheetMoneyNumber(handInIdx >= 0 ? row[handInIdx] : 0),
+      categoryCompany: String(categoryIdx >= 0 ? row[categoryIdx] ?? "" : "").trim(),
+    });
+  }
+  return out;
+}
+
+function isTruthySheetCell(value: unknown): boolean {
+  const normalized = String(value ?? "")
+    .trim()
+    .toLowerCase();
+  return (
+    normalized === "true" ||
+    normalized === "1" ||
+    normalized === "yes" ||
+    normalized === "y" ||
+    normalized === "checked" ||
+    normalized === "x"
+  );
 }
 
 function countSalesLogRowsForSeller(

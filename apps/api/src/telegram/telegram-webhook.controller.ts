@@ -10,11 +10,13 @@ import { ConfigService } from "@nestjs/config";
 import type { Request } from "express";
 import type {
   CashInTabAggregate,
+  SellerBreakdownResult,
   SellerCashInApplyResult,
   SellerCashInPreview,
   SellerCashInRow,
   SellerEmailRow,
   SellerOutstandingRow,
+  SellerUncashedSaleBreakdownRow,
 } from "../sheets/sheets.service";
 import { SheetsService } from "../sheets/sheets.service";
 
@@ -110,6 +112,19 @@ export class TelegramWebhookController {
         cashParsed.sellerCode,
         cashParsed.explicitAmount
       );
+      return { ok: true };
+    }
+
+    const breakdownParsed = parseBreakdownCommand(text);
+    if (breakdownParsed != null) {
+      if (!breakdownParsed.ok) {
+        await telegramSendMessage(token, {
+          chat_id: chatId,
+          text: breakdownParsed.error,
+        });
+        return { ok: true };
+      }
+      await this.handleBreakdownCommand(token, chatId, breakdownParsed.sellerCode);
       return { ok: true };
     }
 
@@ -319,6 +334,35 @@ export class TelegramWebhookController {
       parse_mode: "HTML",
     });
   }
+
+  private async handleBreakdownCommand(
+    token: string,
+    chatId: number,
+    sellerCode: string
+  ): Promise<void> {
+    let breakdown: SellerBreakdownResult;
+    try {
+      breakdown = await this.sheetsService.getSellerBreakdownFromSheets(sellerCode);
+    } catch (err: unknown) {
+      const msg =
+        err instanceof Error ? err.message : "Unknown error loading breakdown.";
+      console.error("[TelegramWebhook] /breakdown sheets error", msg);
+      await telegramSendMessage(token, {
+        chat_id: chatId,
+        text: `Could not load sales breakdown.\n${msg}`,
+      });
+      return;
+    }
+
+    const messages = formatBreakdownMessagesHtml(breakdown);
+    for (const text of messages) {
+      await telegramSendMessage(token, {
+        chat_id: chatId,
+        text,
+        parse_mode: "HTML",
+      });
+    }
+  }
 }
 
 type CallbackQueryExtract = {
@@ -379,6 +423,31 @@ function parseCashCommand(text: string): CashParseResult | null {
     return { ok: false, error: "Amount is not a valid number." };
   }
   return { ok: true, sellerCode, explicitAmount: n };
+}
+
+type BreakdownParseResult =
+  | { ok: true; sellerCode: string }
+  | { ok: false; error: string };
+
+function parseBreakdownCommand(text: string): BreakdownParseResult | null {
+  const trimmed = text.trim();
+  if (trimmed === "") return null;
+  const parts = trimmed.split(/\s+/);
+  const command = parts[0] ?? "";
+  if (!/^\/breakdown(@\w+)?$/i.test(command)) {
+    return null;
+  }
+  if (parts.length !== 2) {
+    return {
+      ok: false,
+      error: "Usage: /breakdown <seller_code>",
+    };
+  }
+  const sellerRaw = (parts[1] ?? "").trim();
+  if (!/^\d+$/.test(sellerRaw)) {
+    return { ok: false, error: "Seller code must be digits only." };
+  }
+  return { ok: true, sellerCode: normalizeSellerCode(sellerRaw) };
 }
 
 function buildCashConfirmCallbackData(
@@ -668,6 +737,84 @@ function escapeHtml(s: string): string {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+}
+
+function formatBreakdownMessagesHtml(
+  breakdown: SellerBreakdownResult
+): string[] {
+  const headerLines = [
+    `BREAKDOWN — seller ${breakdown.sellerCode}`,
+    "",
+    `Uncashed sales: ${breakdown.saleCount}`,
+    `Gross total: ${formatMoneyCompact(breakdown.totalGross)}`,
+    `Commission total: ${formatMoneyCompact(breakdown.totalCommission)}`,
+    `Hand-in total: ${formatMoneyCompact(breakdown.totalHandIn)}`,
+    `Card total (primary): ${formatMoneyCompact(breakdown.cardTotalPrimary)}`,
+    `Card total (M): ${formatMoneyCompact(breakdown.cardTotalM)}`,
+    `Card total (combined): ${formatMoneyCompact(breakdown.cardTotalCombined)}`,
+  ];
+
+  if (breakdown.sales.length === 0) {
+    return [
+      `<pre>${escapeHtml(
+        `${headerLines.join("\n")}\n\nNo uncashed sales found for this seller.`
+      )}</pre>`,
+    ];
+  }
+
+  const entries = breakdown.sales.map((sale, idx) =>
+    formatBreakdownSaleEntry(sale, idx + 1)
+  );
+
+  const limit = 3900;
+  const messages: string[] = [];
+  let current = `${headerLines.join("\n")}\n\n`;
+  for (const entry of entries) {
+    if (current.length + entry.length + 1 > limit) {
+      messages.push(`<pre>${escapeHtml(current.trimEnd())}</pre>`);
+      current = `${entry}\n`;
+      continue;
+    }
+    current += `${entry}\n`;
+  }
+  if (current.trim() !== "") {
+    messages.push(`<pre>${escapeHtml(current.trimEnd())}</pre>`);
+  }
+  return messages;
+}
+
+function formatBreakdownSaleEntry(
+  sale: SellerUncashedSaleBreakdownRow,
+  index: number
+): string {
+  const ticketDisplay =
+    sale.ticketDisplayName.trim() === "" ? sale.ticketTypeSlug : sale.ticketDisplayName;
+  return [
+    `${index}) ${ticketDisplay || "-"}`,
+    `   slug: ${sale.ticketTypeSlug || "-"}`,
+    `   qty: ${formatNumberCompact(sale.qty)}`,
+    `   unit paid: ${formatMoneyCompact(sale.unitPricePaid)}`,
+    `   gross: ${formatMoneyCompact(sale.grossAmount)}`,
+    `   commission: ${formatMoneyCompact(sale.grossCommission)}`,
+    `   hand-in: ${formatMoneyCompact(sale.handInAmount)}`,
+    `   order: ${sale.orderId || "-"}`,
+    `   category: ${sale.categoryCompany || "-"}`,
+    `   created: ${sale.orderCreatedAt || "-"}`,
+  ].join("\n");
+}
+
+function formatMoneyCompact(n: number): string {
+  return n.toLocaleString("en-GB", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
+  });
+}
+
+function formatNumberCompact(n: number): string {
+  return n.toLocaleString("en-GB", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
+  });
 }
 
 async function telegramAnswerCallbackQuery(
