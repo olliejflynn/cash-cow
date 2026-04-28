@@ -66,7 +66,11 @@ export type SellerCashInPreview = {
   mCashE: number;
   amountWasAuto: boolean;
   amountUsed: number;
+  currentOutstandingL: number;
+  currentOutstandingM: number;
   currentOutstanding: number;
+  newOutstandingL: number;
+  newOutstandingM: number;
   newOutstanding: number;
   salesLogRowsToUpdate: number;
   squareRowsPrimary: number;
@@ -77,6 +81,8 @@ export type SellerCashInPreview = {
 export type SellerCashInApplyResult = {
   sellerCode: string;
   amountUsed: number;
+  newOutstandingL: number;
+  newOutstandingM: number;
   newOutstanding: number;
   outstandingRowDeleted: boolean;
   salesLogRowsUpdated: number;
@@ -87,6 +93,8 @@ export type SellerCashInApplyResult = {
 /** Outstanding balance row keyed by seller code digits from Outstanding tab. */
 export type SellerOutstandingRow = {
   sellerCode: string;
+  outstandingL: number;
+  outstandingM: number;
   outstanding: number;
 };
 
@@ -752,7 +760,7 @@ export class SheetsService {
     return out;
   }
 
-  /** Read all outstanding balances from Outstanding tab headers Seller_Code / Outstanding. */
+  /** Read all outstanding balances from Outstanding tab headers Seller_Code / Outstanding L / Outstanding M. */
   async getAllOutstandingBalances(): Promise<SellerOutstandingRow[]> {
     const client = await this.getSheetsClient();
     const spreadsheetId = this.spreadsheetId.trim();
@@ -765,7 +773,7 @@ export class SheetsService {
       this.outstandingSheetName,
       "Check OUTSTANDING_SHEET_NAME."
     );
-    const range = `${a1SheetRangePrefix(title)}A:B`;
+    const range = `${a1SheetRangePrefix(title)}A:C`;
     const response = await client.spreadsheets.values.get({
       spreadsheetId,
       range,
@@ -841,13 +849,18 @@ export class SheetsService {
     }
     const newOutstanding =
       ctx.lCashE + ctx.mCashE + ctx.currentOutstanding - amountUsed;
+    const splitOutstanding = splitOutstandingByPriority(newOutstanding, ctx.mCashE);
     return {
       sellerCode,
       lCashE: ctx.lCashE,
       mCashE: ctx.mCashE,
       amountWasAuto,
       amountUsed,
+      currentOutstandingL: ctx.currentOutstandingL,
+      currentOutstandingM: ctx.currentOutstandingM,
       currentOutstanding: ctx.currentOutstanding,
+      newOutstandingL: splitOutstanding.outstandingL,
+      newOutstandingM: splitOutstanding.outstandingM,
       newOutstanding,
       salesLogRowsToUpdate: ctx.salesLogMatchCount,
       squareRowsPrimary: ctx.squarePrimaryDeleteCount,
@@ -877,6 +890,7 @@ export class SheetsService {
     }
     const newOutstanding =
       ctx.lCashE + ctx.mCashE + ctx.currentOutstanding - amountUsed;
+    const splitOutstanding = splitOutstandingByPriority(newOutstanding, ctx.mCashE);
 
     const outstandingTitle = await this.resolveSheetTitleForConfiguredTab(
       client,
@@ -892,7 +906,7 @@ export class SheetsService {
     const outPrefix = a1SheetRangePrefix(outstandingTitle);
 
     const outstandingRowDeleted =
-      Math.abs(newOutstanding) < OUTSTANDING_ZERO_EPS &&
+      Math.abs(splitOutstanding.totalOutstanding) < OUTSTANDING_ZERO_EPS &&
       ctx.outstandingSheetRow1Based != null;
     await this.writeOutstandingValue(
       client,
@@ -900,7 +914,7 @@ export class SheetsService {
       outPrefix,
       outstandingSheetId,
       sellerCode,
-      newOutstanding,
+      splitOutstanding,
       ctx.outstandingSheetRow1Based
     );
 
@@ -926,7 +940,12 @@ export class SheetsService {
     return {
       sellerCode,
       amountUsed,
-      newOutstanding: Math.abs(newOutstanding) < OUTSTANDING_ZERO_EPS ? 0 : newOutstanding,
+      newOutstandingL: splitOutstanding.outstandingL,
+      newOutstandingM: splitOutstanding.outstandingM,
+      newOutstanding:
+        Math.abs(splitOutstanding.totalOutstanding) < OUTSTANDING_ZERO_EPS
+          ? 0
+          : splitOutstanding.totalOutstanding,
       outstandingRowDeleted,
       salesLogRowsUpdated: salesUpdated,
       squareRowsDeletedPrimary: delP,
@@ -937,6 +956,8 @@ export class SheetsService {
   private async loadCashInContextForSeller(sellerCode: string): Promise<{
     lCashE: number;
     mCashE: number;
+    currentOutstandingL: number;
+    currentOutstandingM: number;
     currentOutstanding: number;
     outstandingSheetRow1Based: number | null;
     salesLogMatchCount: number;
@@ -967,13 +988,14 @@ export class SheetsService {
       this.outstandingSheetName,
       "Check OUTSTANDING_SHEET_NAME."
     );
-    const outRange = `${a1SheetRangePrefix(outstandingTitle)}A:B`;
+    const outRange = `${a1SheetRangePrefix(outstandingTitle)}A:C`;
     const outRes = await client.spreadsheets.values.get({
       spreadsheetId,
       range: outRange,
     });
     const outValues = outRes.data.values ?? [];
-    const { currentOutstanding, row1Based } = parseOutstandingForSeller(
+    const { currentOutstandingL, currentOutstandingM, currentOutstanding, row1Based } =
+      parseOutstandingForSeller(
       outValues,
       sellerCode
     );
@@ -1005,6 +1027,8 @@ export class SheetsService {
     return {
       lCashE,
       mCashE,
+      currentOutstandingL,
+      currentOutstandingM,
       currentOutstanding,
       outstandingSheetRow1Based: row1Based,
       salesLogMatchCount,
@@ -1039,10 +1063,14 @@ export class SheetsService {
     rangePrefix: string,
     sheetId: number,
     sellerCode: string,
-    newOutstanding: number,
+    splitOutstanding: {
+      outstandingL: number;
+      outstandingM: number;
+      totalOutstanding: number;
+    },
     existingRow1Based: number | null
   ): Promise<void> {
-    const abs = Math.abs(newOutstanding);
+    const abs = Math.abs(splitOutstanding.totalOutstanding);
     if (abs < OUTSTANDING_ZERO_EPS) {
       if (existingRow1Based != null) {
         await this.deleteSheetRowsBy1BasedIndices(
@@ -1055,25 +1083,27 @@ export class SheetsService {
       return;
     }
 
-    const cell = String(newOutstanding);
+    const cellL = String(splitOutstanding.outstandingL);
+    const cellM = String(splitOutstanding.outstandingM);
     if (existingRow1Based != null) {
       const colB = `${rangePrefix}B${existingRow1Based}`;
+      const colC = `${rangePrefix}C${existingRow1Based}`;
       await client.spreadsheets.values.update({
         spreadsheetId,
-        range: colB,
+        range: `${colB}:${colC}`,
         valueInputOption: "USER_ENTERED",
-        requestBody: { values: [[cell]] },
+        requestBody: { values: [[cellL, cellM]] },
       });
       return;
     }
 
-    const appendRange = `${rangePrefix}A:B`;
+    const appendRange = `${rangePrefix}A:C`;
     await client.spreadsheets.values.append({
       spreadsheetId,
       range: appendRange,
       valueInputOption: "USER_ENTERED",
       insertDataOption: "INSERT_ROWS",
-      requestBody: { values: [[sellerCode, cell]] },
+      requestBody: { values: [[sellerCode, cellL, cellM]] },
     });
   }
 
@@ -1467,32 +1497,60 @@ function parseSheetMoneyNumber(value: unknown): number {
 function parseOutstandingForSeller(
   values: unknown[][],
   sellerCode: string
-): { currentOutstanding: number; row1Based: number | null } {
+): {
+  currentOutstandingL: number;
+  currentOutstandingM: number;
+  currentOutstanding: number;
+  row1Based: number | null;
+} {
   if (values.length === 0) {
-    return { currentOutstanding: 0, row1Based: null };
+    return {
+      currentOutstandingL: 0,
+      currentOutstandingM: 0,
+      currentOutstanding: 0,
+      row1Based: null,
+    };
   }
   const headerRow = values[0] ?? [];
   const idxSeller = headerRow.findIndex(
     (c) => normSheetHeader(String(c ?? "")) === "seller_code"
   );
-  const idxOut = headerRow.findIndex(
+  const idxOutL = headerRow.findIndex(
+    (c) => normSheetHeader(String(c ?? "")) === "outstanding_l"
+  );
+  const idxOutM = headerRow.findIndex(
+    (c) => normSheetHeader(String(c ?? "")) === "outstanding_m"
+  );
+  const idxLegacyOut = headerRow.findIndex(
     (c) => normSheetHeader(String(c ?? "")) === "outstanding"
   );
-  if (idxSeller < 0 || idxOut < 0) {
+  const hasSplit = idxOutL >= 0 && idxOutM >= 0;
+  if (idxSeller < 0 || (!hasSplit && idxLegacyOut < 0)) {
     throw new Error(
-      'Outstanding tab row 1 must include headers "Seller_Code" and "Outstanding".'
+      'Outstanding tab row 1 must include headers "Seller_Code", "Outstanding L", and "Outstanding M".'
     );
   }
   for (let i = 1; i < values.length; i++) {
     const row = values[i] ?? [];
     const rowSeller = normalizeCashInSellerDigits(String(row[idxSeller] ?? ""));
     if (rowSeller !== sellerCode) continue;
+    const outstandingL = hasSplit ? parseSheetMoneyNumber(row[idxOutL]) : 0;
+    const outstandingM = hasSplit
+      ? parseSheetMoneyNumber(row[idxOutM])
+      : parseSheetMoneyNumber(row[idxLegacyOut]);
     return {
-      currentOutstanding: parseSheetMoneyNumber(row[idxOut]),
+      currentOutstandingL: outstandingL,
+      currentOutstandingM: outstandingM,
+      currentOutstanding: outstandingL + outstandingM,
       row1Based: i + 1,
     };
   }
-  return { currentOutstanding: 0, row1Based: null };
+  return {
+    currentOutstandingL: 0,
+    currentOutstandingM: 0,
+    currentOutstanding: 0,
+    row1Based: null,
+  };
 }
 
 function parseAllOutstandingRows(values: unknown[][]): SellerOutstandingRow[] {
@@ -1501,12 +1559,19 @@ function parseAllOutstandingRows(values: unknown[][]): SellerOutstandingRow[] {
   const idxSeller = headerRow.findIndex(
     (c) => normSheetHeader(String(c ?? "")) === "seller_code"
   );
-  const idxOut = headerRow.findIndex(
+  const idxOutL = headerRow.findIndex(
+    (c) => normSheetHeader(String(c ?? "")) === "outstanding_l"
+  );
+  const idxOutM = headerRow.findIndex(
+    (c) => normSheetHeader(String(c ?? "")) === "outstanding_m"
+  );
+  const idxLegacyOut = headerRow.findIndex(
     (c) => normSheetHeader(String(c ?? "")) === "outstanding"
   );
-  if (idxSeller < 0 || idxOut < 0) {
+  const hasSplit = idxOutL >= 0 && idxOutM >= 0;
+  if (idxSeller < 0 || (!hasSplit && idxLegacyOut < 0)) {
     throw new Error(
-      'Outstanding tab row 1 must include headers "Seller_Code" and "Outstanding".'
+      'Outstanding tab row 1 must include headers "Seller_Code", "Outstanding L", and "Outstanding M".'
     );
   }
   const out: SellerOutstandingRow[] = [];
@@ -1514,12 +1579,40 @@ function parseAllOutstandingRows(values: unknown[][]): SellerOutstandingRow[] {
     const row = values[i] ?? [];
     const sellerCode = normalizeCashInSellerDigits(String(row[idxSeller] ?? ""));
     if (sellerCode === "") continue;
+    const outstandingL = hasSplit ? parseSheetMoneyNumber(row[idxOutL]) : 0;
+    const outstandingM = hasSplit
+      ? parseSheetMoneyNumber(row[idxOutM])
+      : parseSheetMoneyNumber(row[idxLegacyOut]);
     out.push({
       sellerCode,
-      outstanding: parseSheetMoneyNumber(row[idxOut]),
+      outstandingL,
+      outstandingM,
+      outstanding: outstandingL + outstandingM,
     });
   }
   return out;
+}
+
+function splitOutstandingByPriority(
+  totalOutstanding: number,
+  mCashIn: number
+): { outstandingL: number; outstandingM: number; totalOutstanding: number } {
+  if (!Number.isFinite(totalOutstanding)) {
+    return { outstandingL: 0, outstandingM: 0, totalOutstanding: 0 };
+  }
+  if (Math.abs(totalOutstanding) < OUTSTANDING_ZERO_EPS) {
+    return { outstandingL: 0, outstandingM: 0, totalOutstanding: 0 };
+  }
+
+  // Keep as much outstanding as possible on M first, capped by M cash-in for positive totals.
+  if (totalOutstanding > 0) {
+    const cappedM = Math.min(totalOutstanding, Math.max(0, mCashIn));
+    const outstandingL = totalOutstanding - cappedM;
+    return { outstandingL, outstandingM: cappedM, totalOutstanding };
+  }
+
+  // Negative outstanding means seller is owed; keep it on M first.
+  return { outstandingL: 0, outstandingM: totalOutstanding, totalOutstanding };
 }
 
 function parseSellerEmailRows(values: unknown[][]): SellerEmailRow[] {
