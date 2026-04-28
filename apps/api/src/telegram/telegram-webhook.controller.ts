@@ -778,9 +778,10 @@ function formatBreakdownMessagesHtml(
     `Gross total: ${formatMoneyCompact(breakdown.totalGross)}`,
     `Commission total: ${formatMoneyCompact(breakdown.totalCommission)}`,
     `Hand-in total: ${formatMoneyCompact(breakdown.totalHandIn)}`,
-    `Card total (primary): ${formatMoneyCompact(breakdown.cardTotalPrimary)}`,
+    `Card total (L): ${formatMoneyCompact(breakdown.cardTotalPrimary)}`,
     `Card total (M): ${formatMoneyCompact(breakdown.cardTotalM)}`,
     `Card total (combined): ${formatMoneyCompact(breakdown.cardTotalCombined)}`,
+    `CASH IN: ${formatMoneyCompact(breakdown.totalHandIn)}`,
   ];
 
   if (breakdown.sales.length === 0) {
@@ -791,17 +792,19 @@ function formatBreakdownMessagesHtml(
     ];
   }
 
-  const entries = breakdown.sales.map((sale, idx) =>
-    formatBreakdownSaleEntry(sale, idx + 1)
-  );
+  const entries = breakdown.sales.map((sale) => formatBreakdownSaleEntry(sale));
+  const tableHeaders = [
+    "QTY NAME : GROSS AMOUNT | GROSS COMMISSION | HAND IN",
+    "-----------------------------------------------------",
+  ];
 
   const limit = 3900;
   const messages: string[] = [];
-  let current = `${headerLines.join("\n")}\n\n`;
+  let current = `${headerLines.join("\n")}\n\n${tableHeaders.join("\n")}\n`;
   for (const entry of entries) {
     if (current.length + entry.length + 1 > limit) {
       messages.push(`<pre>${escapeHtml(current.trimEnd())}</pre>`);
-      current = `${entry}\n`;
+      current = `${tableHeaders.join("\n")}\n${entry}\n`;
       continue;
     }
     current += `${entry}\n`;
@@ -812,24 +815,15 @@ function formatBreakdownMessagesHtml(
   return messages;
 }
 
-function formatBreakdownSaleEntry(
-  sale: SellerUncashedSaleBreakdownRow,
-  index: number
-): string {
+function formatBreakdownSaleEntry(sale: SellerUncashedSaleBreakdownRow): string {
   const ticketDisplay =
     sale.ticketDisplayName.trim() === "" ? sale.ticketTypeSlug : sale.ticketDisplayName;
-  return [
-    `${index}) ${ticketDisplay || "-"}`,
-    `   slug: ${sale.ticketTypeSlug || "-"}`,
-    `   qty: ${formatNumberCompact(sale.qty)}`,
-    `   unit paid: ${formatMoneyCompact(sale.unitPricePaid)}`,
-    `   gross: ${formatMoneyCompact(sale.grossAmount)}`,
-    `   commission: ${formatMoneyCompact(sale.grossCommission)}`,
-    `   hand-in: ${formatMoneyCompact(sale.handInAmount)}`,
-    `   order: ${sale.orderId || "-"}`,
-    `   category: ${sale.categoryCompany || "-"}`,
-    `   created: ${sale.orderCreatedAt || "-"}`,
-  ].join("\n");
+  return (
+    `X${formatNumberCompact(sale.qty)} ${ticketDisplay || "-"} : ` +
+    `${formatMoneyCompact(sale.grossAmount)} | ` +
+    `${formatMoneyCompact(sale.grossCommission)} | ` +
+    `${formatMoneyCompact(sale.handInAmount)}`
+  );
 }
 
 function formatMoneyCompact(n: number): string {
