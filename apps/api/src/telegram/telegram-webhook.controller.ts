@@ -598,17 +598,7 @@ function formatSingleSellerBalanceHtml(input: {
   outstandingM: number;
 }): string {
   const { sellerCode, email, l, m, outstandingL, outstandingM } = input;
-  const outstandingTotal = outstandingL + outstandingM;
-  const grandTotal =
-    m.sumCollected +
-    m.sumC +
-    m.sumD +
-    m.sumE +
-    l.sumCollected +
-    l.sumC +
-    l.sumD +
-    l.sumE +
-    outstandingTotal;
+  const grandTotal = m.sumE + l.sumE;
   const lines = [
     "CASH IN",
     "",
@@ -818,12 +808,13 @@ function formatBreakdownMessagesHtml(
 function formatBreakdownSaleEntry(sale: SellerUncashedSaleBreakdownRow): string {
   const ticketDisplay =
     sale.ticketDisplayName.trim() === "" ? sale.ticketTypeSlug : sale.ticketDisplayName;
-  return (
+  const row = (
     `X${formatNumberCompact(sale.qty)} ${ticketDisplay || "-"} : ` +
     `${formatMoneyCompact(sale.grossAmount)} | ` +
     `${formatMoneyCompact(sale.grossCommission)} | ` +
     `${formatMoneyCompact(sale.handInAmount)}`
   );
+  return sale.isCancelled ? strikeThroughText(row) : row;
 }
 
 function formatMoneyCompact(n: number): string {
@@ -838,6 +829,13 @@ function formatNumberCompact(n: number): string {
     minimumFractionDigits: 0,
     maximumFractionDigits: 2,
   });
+}
+
+function strikeThroughText(s: string): string {
+  const overlay = "\u0336";
+  return Array.from(s)
+    .map((ch) => `${ch}${overlay}`)
+    .join("");
 }
 
 async function telegramAnswerCallbackQuery(

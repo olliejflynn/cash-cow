@@ -106,6 +106,7 @@ export type SellerEmailRow = {
 
 export type SellerUncashedSaleBreakdownRow = {
   orderId: string;
+  orderStatus: string;
   orderCreatedAt: string;
   ticketTypeSlug: string;
   ticketDisplayName: string;
@@ -115,6 +116,7 @@ export type SellerUncashedSaleBreakdownRow = {
   grossCommission: number;
   handInAmount: number;
   categoryCompany: string;
+  isCancelled: boolean;
 };
 
 export type SellerBreakdownResult = {
@@ -275,6 +277,7 @@ export class SheetsService {
     let totalCommission = 0;
     let totalHandIn = 0;
     for (const sale of sales) {
+      if (sale.isCancelled) continue;
       totalGross += sale.grossAmount;
       totalCommission += sale.grossCommission;
       totalHandIn += sale.handInAmount;
@@ -1675,6 +1678,9 @@ function parseUncashedSalesRowsForSeller(
   );
   const cashedIdx = header.findIndex((h) => normSheetHeader(h) === "cashed?");
   const orderIdIdx = header.findIndex((h) => normSheetHeader(h) === "order_id");
+  const orderStatusIdx = header.findIndex(
+    (h) => normSheetHeader(h) === "order_status"
+  );
   const createdIdx = header.findIndex(
     (h) => normSheetHeader(h) === "order_created_at"
   );
@@ -1717,9 +1723,13 @@ function parseUncashedSalesRowsForSeller(
     const ticketDisplayName =
       ticketDisplayBySlug.get(ticketTypeSlug) ?? ticketTypeSlug;
     const qty = parseSheetMoneyNumber(qtyIdx >= 0 ? row[qtyIdx] : 0);
+    const orderStatus = String(
+      orderStatusIdx >= 0 ? row[orderStatusIdx] ?? "" : ""
+    ).trim();
 
     out.push({
       orderId: String(orderIdIdx >= 0 ? row[orderIdIdx] ?? "" : "").trim(),
+      orderStatus,
       orderCreatedAt: String(createdIdx >= 0 ? row[createdIdx] ?? "" : "").trim(),
       ticketTypeSlug,
       ticketDisplayName,
@@ -1735,6 +1745,7 @@ function parseUncashedSalesRowsForSeller(
       ),
       handInAmount: parseSheetMoneyNumber(handInIdx >= 0 ? row[handInIdx] : 0),
       categoryCompany: String(categoryIdx >= 0 ? row[categoryIdx] ?? "" : "").trim(),
+      isCancelled: isCancelledOrderStatus(orderStatus),
     });
   }
   return out;
@@ -1752,6 +1763,11 @@ function isTruthySheetCell(value: unknown): boolean {
     normalized === "checked" ||
     normalized === "x"
   );
+}
+
+function isCancelledOrderStatus(status: string): boolean {
+  const normalized = status.trim().toLowerCase();
+  return normalized === "cancelled" || normalized === "canceled";
 }
 
 function countSalesLogRowsForSeller(
