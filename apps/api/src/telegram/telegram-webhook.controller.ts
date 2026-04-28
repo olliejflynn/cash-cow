@@ -286,12 +286,14 @@ export class TelegramWebhookController {
         return;
       }
       const lBreakdown: CashInTabAggregate = row?.l ?? {
+        sumCollected: 0,
         sumC: 0,
         sumD: 0,
         sumE: 0,
         cashIn: 0,
       };
       const mBreakdown: CashInTabAggregate = row?.m ?? {
+        sumCollected: 0,
         sumC: 0,
         sumD: 0,
         sumE: 0,
@@ -505,21 +507,31 @@ function formatSingleSellerBalanceHtml(input: {
   m: CashInTabAggregate;
 }): string {
   const { sellerCode, email, l, m } = input;
-  const grandTotal = m.sumE + m.sumD + m.sumC + l.sumE + l.sumD + l.sumC;
+  const grandTotal =
+    m.sumCollected +
+    m.sumC +
+    m.sumD +
+    m.sumE +
+    l.sumCollected +
+    l.sumC +
+    l.sumD +
+    l.sumE;
   const lines = [
     "CASH IN",
     "",
     `${sellerCode} | ${email || "-"}`,
     "",
     "M SHEET",
-    `Collected: ${formatMoney(m.sumE)}`,
+    `Collected: ${formatMoney(m.sumCollected)}`,
     `Card:      ${formatMoney(m.sumD)}`,
     `Hand In:   ${formatMoney(m.sumC)}`,
+    `Cash In:   ${formatMoney(m.sumE)}`,
     "",
     "L SHEET",
-    `Collected: ${formatMoney(l.sumE)}`,
+    `Collected: ${formatMoney(l.sumCollected)}`,
     `Card:      ${formatMoney(l.sumD)}`,
     `Hand In:   ${formatMoney(l.sumC)}`,
+    `Cash In:   ${formatMoney(l.sumE)}`,
     "",
     `TOTAL: ${formatMoney(grandTotal)}`,
   ];

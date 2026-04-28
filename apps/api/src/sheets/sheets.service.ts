@@ -43,6 +43,7 @@ const SQUARE_PAYMENT_COLUMNS: (keyof SquarePaymentRow)[] = [
 
 /** One tab’s aggregates for a seller (L or M cash-in sheet). */
 export type CashInTabAggregate = {
+  sumCollected: number;
   sumC: number;
   sumD: number;
   sumE: number;
@@ -631,19 +632,21 @@ export class SheetsService {
     const sellerIds = new Set<string>([...mapL.keys(), ...mapM.keys()]);
     const out: SellerCashInRow[] = [];
     for (const sellerId of sellerIds) {
-      const lAgg = mapL.get(sellerId) ?? { sumC: 0, sumD: 0, sumE: 0 };
-      const mAgg = mapM.get(sellerId) ?? { sumC: 0, sumD: 0, sumE: 0 };
+      const lAgg = mapL.get(sellerId) ?? { sumCollected: 0, sumC: 0, sumD: 0, sumE: 0 };
+      const mAgg = mapM.get(sellerId) ?? { sumCollected: 0, sumC: 0, sumD: 0, sumE: 0 };
       const lCashIn = lAgg.sumC - lAgg.sumD;
       const mCashIn = mAgg.sumC - mAgg.sumD;
       out.push({
         sellerId,
         l: {
+          sumCollected: lAgg.sumCollected,
           sumC: lAgg.sumC,
           sumD: lAgg.sumD,
           sumE: lAgg.sumE,
           cashIn: lCashIn,
         },
         m: {
+          sumCollected: mAgg.sumCollected,
           sumC: mAgg.sumC,
           sumD: mAgg.sumD,
           sumE: mAgg.sumE,
@@ -1282,15 +1285,30 @@ function normalizeCashInSellerDigits(value: string): string {
 
 function aggregateCashInRowsBySeller(
   rows: unknown[][]
-): Map<string, { sumC: number; sumD: number; sumE: number }> {
-  const map = new Map<string, { sumC: number; sumD: number; sumE: number }>();
-  for (const row of rows) {
-    const sellerId = String(row[0] ?? "").trim();
+): Map<string, { sumCollected: number; sumC: number; sumD: number; sumE: number }> {
+  const map = new Map<
+    string,
+    { sumCollected: number; sumC: number; sumD: number; sumE: number }
+  >();
+  const header = (rows[0] ?? []).map((cell) => normSheetHeader(String(cell ?? "")));
+  const idxSeller = header.findIndex((h) => h === "seller_id");
+  const idxCollected = header.findIndex((h) => h === "total_collected");
+  const idxHandIn = header.findIndex((h) => h === "total_hand_in");
+  const idxCard = header.findIndex((h) => h === "card_amount");
+  const idxCashIn = header.findIndex((h) => h === "cash_in");
+  const hasHeader = idxSeller >= 0;
+  const start = hasHeader ? 1 : 0;
+
+  for (let i = start; i < rows.length; i++) {
+    const row = rows[i] ?? [];
+    const sellerId = String(row[idxSeller >= 0 ? idxSeller : 0] ?? "").trim();
     if (sellerId === "") continue;
-    const c = parseSheetMoneyNumber(row[2]);
-    const d = parseSheetMoneyNumber(row[3]);
-    const e = parseSheetMoneyNumber(row[4]);
-    const cur = map.get(sellerId) ?? { sumC: 0, sumD: 0, sumE: 0 };
+    const collected = parseSheetMoneyNumber(row[idxCollected >= 0 ? idxCollected : 1]);
+    const c = parseSheetMoneyNumber(row[idxHandIn >= 0 ? idxHandIn : 2]);
+    const d = parseSheetMoneyNumber(row[idxCard >= 0 ? idxCard : 3]);
+    const e = parseSheetMoneyNumber(row[idxCashIn >= 0 ? idxCashIn : 4]);
+    const cur = map.get(sellerId) ?? { sumCollected: 0, sumC: 0, sumD: 0, sumE: 0 };
+    cur.sumCollected += collected;
     cur.sumC += c;
     cur.sumD += d;
     cur.sumE += e;
