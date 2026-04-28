@@ -9,6 +9,7 @@ import {
 import { ConfigService } from "@nestjs/config";
 import type { Request } from "express";
 import type {
+  CashInTabAggregate,
   SellerCashInApplyResult,
   SellerCashInPreview,
   SellerCashInRow,
@@ -284,16 +285,25 @@ export class TelegramWebhookController {
         });
         return;
       }
-      const l = row?.l.sumE ?? 0;
-      const m = row?.m.sumE ?? 0;
+      const lBreakdown: CashInTabAggregate = row?.l ?? {
+        sumC: 0,
+        sumD: 0,
+        sumE: 0,
+        cashIn: 0,
+      };
+      const mBreakdown: CashInTabAggregate = row?.m ?? {
+        sumC: 0,
+        sumD: 0,
+        sumE: 0,
+        cashIn: 0,
+      };
       await telegramSendMessage(token, {
         chat_id: chatId,
         text: formatSingleSellerBalanceHtml({
           sellerCode,
           email: emailBySeller.get(sellerCode) ?? "",
-          l,
-          m,
-          outstanding,
+          l: lBreakdown,
+          m: mBreakdown,
         }),
         parse_mode: "HTML",
       });
@@ -491,22 +501,30 @@ function formatMoney(n: number): string {
 function formatSingleSellerBalanceHtml(input: {
   sellerCode: string;
   email: string;
-  l: number;
-  m: number;
-  outstanding: number;
+  l: CashInTabAggregate;
+  m: CashInTabAggregate;
 }): string {
-  const { sellerCode, email, l, m, outstanding } = input;
-  const total = l + m + outstanding;
-  const title = `${sellerCode} | ${email || "-"}`;
-  const widths = computeBalanceGridWidths([{ l, m, outstanding, total }]);
-  return `CASH IN\n\n${formatSellerCashSectionHtml({
-    title,
-    l,
-    m,
-    outstanding,
-    total,
-    widths,
-  })}`;
+  const { sellerCode, email, l, m } = input;
+  const grandTotal = m.sumE + m.sumD + m.sumC + l.sumE + l.sumD + l.sumC;
+  const lines = [
+    "CASH IN",
+    "",
+    `${sellerCode} | ${email || "-"}`,
+    "",
+    "M SHEET",
+    `Collected: ${formatMoney(m.sumE)}`,
+    `Card:      ${formatMoney(m.sumD)}`,
+    `Hand In:   ${formatMoney(m.sumC)}`,
+    "",
+    "L SHEET",
+    `Collected: ${formatMoney(l.sumE)}`,
+    `Card:      ${formatMoney(l.sumD)}`,
+    `Hand In:   ${formatMoney(l.sumC)}`,
+    "",
+    `TOTAL: ${formatMoney(grandTotal)}`,
+  ];
+
+  return `<pre>${escapeHtml(lines.join("\n"))}</pre>`;
 }
 
 function formatAllBalancesHtml(
