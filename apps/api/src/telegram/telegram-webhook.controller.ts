@@ -821,11 +821,9 @@ function formatBreakdownMessages(breakdown: SellerBreakdownResult): string[] {
   let currentBlock = "";
   for (const entry of entries) {
     const nextBlock = `${currentBlock}${entry}\n`;
-    const nextMessage = `${currentSummary}<pre>${escapeHtml(nextBlock.trimEnd())}</pre>`;
+    const nextMessage = `${currentSummary}<pre>${nextBlock.trimEnd()}</pre>`;
     if (nextMessage.length > limit && currentBlock.trim() !== "") {
-      messages.push(
-        `${currentSummary}<pre>${escapeHtml(currentBlock.trimEnd())}</pre>`
-      );
+      messages.push(`${currentSummary}<pre>${currentBlock.trimEnd()}</pre>`);
       currentSummary = "All Sales 📋 (continued)\n";
       currentBlock = `${entry}\n`;
       continue;
@@ -833,7 +831,7 @@ function formatBreakdownMessages(breakdown: SellerBreakdownResult): string[] {
     currentBlock = nextBlock;
   }
   if (currentBlock.trim() !== "") {
-    messages.push(`${currentSummary}<pre>${escapeHtml(currentBlock.trimEnd())}</pre>`);
+    messages.push(`${currentSummary}<pre>${currentBlock.trimEnd()}</pre>`);
   }
   return messages;
 }
@@ -855,7 +853,9 @@ function formatBreakdownSaleEntry(
   );
   const handIn = formatMoneyCompact(sale.handInAmount).padStart(widths.handIn, " ");
   const row = `${qty} ${name} : ${gross} | ${commission} | ${handIn}`;
-  return sale.isCancelled ? strikeThroughText(row) : row;
+  const rowText = sale.isCancelled ? strikeThroughText(row) : row;
+  const orderNumber = String(sale.orderId ?? "").trim() || "-";
+  return `<b>${escapeHtml(orderNumber)}</b> ${escapeHtml(rowText)}`;
 }
 
 function computeBreakdownSaleWidths(
