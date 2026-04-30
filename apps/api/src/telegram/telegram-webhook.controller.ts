@@ -618,7 +618,7 @@ function formatSingleSellerBalanceHtml(input: {
   outstandingM: number;
 }): string {
   const { sellerCode, email, l, m, outstandingL, outstandingM } = input;
-  const grandTotal = m.sumE + l.sumE;
+  const grandTotal = m.sumE + l.sumE + outstandingL + outstandingM;
   const lines = [
     "CASH IN",
     "",
