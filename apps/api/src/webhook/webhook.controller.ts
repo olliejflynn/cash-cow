@@ -48,18 +48,22 @@ export class WebhookController {
         })
       );
 
-      const { matchedRows, updatedRows } =
-        await this.sheetsService.updateSalesLogOrderStatusByOrderId(
-          orderId,
-          orderStatus
-        );
+      const payloadLineIds = (order.line_items ?? [])
+        .map((li) => li.id)
+        .slice(0, 40);
+      const syncResult =
+        await this.sheetsService.syncSalesLogRowsFromWooOrder(order);
+      const { matchedRows, updatedRows } = syncResult;
       console.log(
-        "[WooWebhook] Status sync result",
+        "[WooWebhook] Sales_Log sync result",
         JSON.stringify({
           order_id: orderId,
           order_status: orderStatus,
           matched_rows: matchedRows,
           updated_rows: updatedRows,
+          target_cancelled_rows: syncResult.targetCancelledRows,
+          target_active_rows: syncResult.targetActiveRows,
+          payload_line_item_ids_sample: payloadLineIds,
         })
       );
       if (matchedRows > 0) {
@@ -141,18 +145,22 @@ export class WebhookController {
         })
       );
 
-      const { matchedRows, updatedRows } =
-        await this.sheetsService.updateSalesLogOrderStatusByOrderId(
-          orderId,
-          orderStatus
-        );
+      const payloadLineIds = (order.line_items ?? [])
+        .map((li) => li.id)
+        .slice(0, 40);
+      const syncResult =
+        await this.sheetsService.syncSalesLogRowsFromWooOrder(order);
+      const { matchedRows, updatedRows } = syncResult;
       console.log(
-        "[WooWebhook][OrderUpdated] Status sync result",
+        "[WooWebhook][OrderUpdated] Sales_Log sync result",
         JSON.stringify({
           order_id: orderId,
           order_status: orderStatus,
           matched_rows: matchedRows,
           updated_rows: updatedRows,
+          target_cancelled_rows: syncResult.targetCancelledRows,
+          target_active_rows: syncResult.targetActiveRows,
+          payload_line_item_ids_sample: payloadLineIds,
         })
       );
 
@@ -201,7 +209,9 @@ function toWooOrder(payload: Record<string, unknown> | null): WooCommerceOrderDt
     date_created: typeof safe.date_created === "string" ? safe.date_created : "",
     order_key: typeof safe.order_key === "string" ? safe.order_key : undefined,
     line_items: Array.isArray(safe.line_items)
-      ? (safe.line_items as WooCommerceOrderDto["line_items"])
+      ? safe.line_items
+          .map((el) => normalizeWooLineItem(el))
+          .filter((x): x is WooCommerceOrderDto["line_items"][number] => x != null)
       : [],
     coupon_lines: Array.isArray(safe.coupon_lines)
       ? (safe.coupon_lines as WooCommerceOrderDto["coupon_lines"])
@@ -213,6 +223,57 @@ function toWooOrder(payload: Record<string, unknown> | null): WooCommerceOrderDt
     meta_data: Array.isArray(safe.meta_data)
       ? (safe.meta_data as Array<{ key?: string; value?: unknown }>)
       : [],
+  };
+}
+
+function normalizeWooLineItem(
+  raw: unknown
+): WooCommerceOrderDto["line_items"][number] | null {
+  if (!isObject(raw)) return null;
+  const idNum = Number(raw.id);
+  if (!Number.isFinite(idNum)) return null;
+  const qtyNum = Number(raw.quantity);
+  const quantity = Number.isFinite(qtyNum) ? qtyNum : 0;
+  const productIdNum = Number(raw.product_id);
+  const product_id = Number.isFinite(productIdNum) ? productIdNum : 0;
+  const variationIdNum = Number(raw.variation_id);
+  const variation_id = Number.isFinite(variationIdNum) ? variationIdNum : 0;
+  const name = typeof raw.name === "string" ? raw.name : "";
+  const price =
+    typeof raw.price === "string" || typeof raw.price === "number"
+      ? raw.price
+      : "";
+  const total =
+    typeof raw.total === "string" || typeof raw.total === "number"
+      ? String(raw.total)
+      : "";
+  const subtotal =
+    typeof raw.subtotal === "string" || typeof raw.subtotal === "number"
+      ? String(raw.subtotal)
+      : "";
+  const total_tax =
+    typeof raw.total_tax === "string" || typeof raw.total_tax === "number"
+      ? String(raw.total_tax)
+      : undefined;
+  const subtotal_tax =
+    typeof raw.subtotal_tax === "string" || typeof raw.subtotal_tax === "number"
+      ? String(raw.subtotal_tax)
+      : undefined;
+  const meta_data = Array.isArray(raw.meta_data)
+    ? (raw.meta_data as WooCommerceOrderDto["line_items"][number]["meta_data"])
+    : undefined;
+  return {
+    id: idNum,
+    product_id,
+    variation_id,
+    name,
+    quantity,
+    price,
+    total,
+    subtotal,
+    total_tax,
+    subtotal_tax,
+    meta_data,
   };
 }
 

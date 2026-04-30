@@ -2,6 +2,7 @@ import { Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { google, sheets_v4 } from "googleapis";
 import type { SalesLogRow } from "../webhook/sales-log.types";
+import type { WooCommerceOrderDto } from "../webhook/dto/woocommerce-order.dto";
 import type { SquarePaymentRow } from "../webhook/square-payment.types";
 
 /** Orders created before this instant (UTC) are not appended to Sales_Log. */
@@ -396,16 +397,34 @@ export class SheetsService {
   }
 
   /**
-   * Update Sales_Log order status for all rows matching a WooCommerce order id.
-   * Returns counts so callers can decide whether an order already exists in the sheet.
+   * Sync Sales_Log `order_status` per row from a WooCommerce order payload.
+   * Rows whose line item is missing or has quantity ≤ 0 get `cancelled`;
+   * remaining rows get the webhook order-level `status` (reinstatement if a line returns).
    */
-  async updateSalesLogOrderStatusByOrderId(
-    orderId: string,
-    orderStatus: string
-  ): Promise<{ matchedRows: number; updatedRows: number }> {
-    const normalizedOrderId = orderId.trim();
+  async syncSalesLogRowsFromWooOrder(order: WooCommerceOrderDto): Promise<{
+    matchedRows: number;
+    updatedRows: number;
+    targetCancelledRows: number;
+    targetActiveRows: number;
+  }> {
+    const normalizedOrderId = String(order.id ?? "").trim();
     if (normalizedOrderId === "") {
-      return { matchedRows: 0, updatedRows: 0 };
+      return {
+        matchedRows: 0,
+        updatedRows: 0,
+        targetCancelledRows: 0,
+        targetActiveRows: 0,
+      };
+    }
+
+    const orderStatus = String(order.status ?? "").trim();
+    const lineQtyById = new Map<number, number>();
+    for (const item of order.line_items ?? []) {
+      const lid = Number(item.id);
+      if (!Number.isFinite(lid)) continue;
+      const qtyRaw = Number(item.quantity);
+      const qty = Number.isFinite(qtyRaw) ? qtyRaw : 0;
+      lineQtyById.set(lid, qty);
     }
 
     const client = await this.getSheetsClient();
@@ -415,16 +434,30 @@ export class SheetsService {
     });
     const values = response.data.values ?? [];
     if (values.length === 0) {
-      return { matchedRows: 0, updatedRows: 0 };
+      return {
+        matchedRows: 0,
+        updatedRows: 0,
+        targetCancelledRows: 0,
+        targetActiveRows: 0,
+      };
     }
 
     const orderIdColumn = SALES_LOG_COLUMNS.indexOf("order_id");
     const orderStatusColumn = SALES_LOG_COLUMNS.indexOf("order_status");
-    if (orderIdColumn < 0 || orderStatusColumn < 0) {
-      return { matchedRows: 0, updatedRows: 0 };
+    const lineItemIdColumn = SALES_LOG_COLUMNS.indexOf("line_item_id");
+    if (orderIdColumn < 0 || orderStatusColumn < 0 || lineItemIdColumn < 0) {
+      return {
+        matchedRows: 0,
+        updatedRows: 0,
+        targetCancelledRows: 0,
+        targetActiveRows: 0,
+      };
     }
 
+    const cancelledStatus = "cancelled";
     let matchedRows = 0;
+    let targetCancelledRows = 0;
+    let targetActiveRows = 0;
     const updates: sheets_v4.Schema$ValueRange[] = [];
 
     for (let i = 1; i < values.length; i++) {
@@ -433,14 +466,30 @@ export class SheetsService {
       if (rowOrderId !== normalizedOrderId) continue;
 
       matchedRows += 1;
+      const lineItemIdRaw = String(row[lineItemIdColumn] ?? "").trim();
+      const lineItemNum = Number(lineItemIdRaw);
+      const hasLine =
+        lineItemIdRaw !== "" &&
+        Number.isFinite(lineItemNum) &&
+        lineQtyById.has(lineItemNum);
+      const qty = hasLine ? (lineQtyById.get(lineItemNum) ?? 0) : 0;
+      const targetStatus =
+        hasLine && qty > 0 ? orderStatus : cancelledStatus;
+
+      if (targetStatus === cancelledStatus) {
+        targetCancelledRows += 1;
+      } else {
+        targetActiveRows += 1;
+      }
+
       const currentStatus = String(row[orderStatusColumn] ?? "").trim();
-      if (currentStatus === orderStatus) continue;
+      if (currentStatus === targetStatus) continue;
 
       const rowNumber = i + 1;
       const col = toA1Column(orderStatusColumn + 1);
       updates.push({
         range: `${this.salesLogSheetName}!${col}${rowNumber}`,
-        values: [[orderStatus]],
+        values: [[targetStatus]],
       });
     }
 
@@ -454,7 +503,12 @@ export class SheetsService {
       });
     }
 
-    return { matchedRows, updatedRows: updates.length };
+    return {
+      matchedRows,
+      updatedRows: updates.length,
+      targetCancelledRows,
+      targetActiveRows,
+    };
   }
 
   /**
