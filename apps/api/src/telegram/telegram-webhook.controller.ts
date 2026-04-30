@@ -799,7 +799,11 @@ function formatBreakdownMessages(breakdown: SellerBreakdownResult): string[] {
     `Card (L): ${formatMoneyCompact(breakdown.cardTotalPrimary)}`,
     `Card (M): ${formatMoneyCompact(breakdown.cardTotalM)}`,
     `Card total (combined): ${formatMoneyCompact(breakdown.cardTotalCombined)}`,
-    `CASH IN: ${formatMoneyCompact(breakdown.cashInSheetTotal)}`,
+    `Sheet cash in (L+M): ${formatMoneyCompact(breakdown.cashInSheetTotal)}`,
+    `Outstanding (L): ${formatMoneyCompact(breakdown.outstandingL)}`,
+    `Outstanding (M): ${formatMoneyCompact(breakdown.outstandingM)}`,
+    `Outstanding (total): ${formatMoneyCompact(breakdown.outstandingTotal)}`,
+    `CASH IN: ${formatMoneyCompact(breakdown.cashInAfterOutstanding)}`,
   ];
   const summary = headerLines.join("\n");
 

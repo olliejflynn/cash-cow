@@ -134,6 +134,12 @@ export type SellerBreakdownResult = {
   cashInSheetL: number;
   cashInSheetM: number;
   cashInSheetTotal: number;
+  /** Outstanding tab (L / M / combined). */
+  outstandingL: number;
+  outstandingM: number;
+  outstandingTotal: number;
+  /** Cash in from sheet minus combined outstanding (how CASH IN is shown in Telegram). */
+  cashInAfterOutstanding: number;
   cardTotalPrimary: number;
   cardTotalM: number;
   cardTotalCombined: number;
@@ -248,30 +254,37 @@ export class SheetsService {
       throw new Error("SPREADSHEET_ID is not set");
     }
 
-    const [salesRes, ticketRulesRes, primaryCardTotal, mCardTotal, cashRows] =
-      await Promise.all([
-        client.spreadsheets.values.get({
-          spreadsheetId,
-          range: `${this.salesLogSheetName}!A:Z`,
-        }),
-        client.spreadsheets.values.get({
-          spreadsheetId,
-          range: `${this.ticketRulesSheetName}!A:C`,
-        }),
-        this.getSquareCardTotalForSeller(
-          client,
-          spreadsheetId,
-          this.squarePaymentsSheetName,
-          normalizedSellerCode
-        ),
-        this.getSquareCardTotalForSeller(
-          client,
-          spreadsheetId,
-          this.mSquarePaymentsSheetName,
-          normalizedSellerCode
-        ),
-        this.getAllSellersCashInFromSheets(),
-      ]);
+    const [
+      salesRes,
+      ticketRulesRes,
+      primaryCardTotal,
+      mCardTotal,
+      cashRows,
+      outstandingRows,
+    ] = await Promise.all([
+      client.spreadsheets.values.get({
+        spreadsheetId,
+        range: `${this.salesLogSheetName}!A:Z`,
+      }),
+      client.spreadsheets.values.get({
+        spreadsheetId,
+        range: `${this.ticketRulesSheetName}!A:C`,
+      }),
+      this.getSquareCardTotalForSeller(
+        client,
+        spreadsheetId,
+        this.squarePaymentsSheetName,
+        normalizedSellerCode
+      ),
+      this.getSquareCardTotalForSeller(
+        client,
+        spreadsheetId,
+        this.mSquarePaymentsSheetName,
+        normalizedSellerCode
+      ),
+      this.getAllSellersCashInFromSheets(),
+      this.getAllOutstandingBalances(),
+    ]);
 
     const ticketNamesBySlug = parseTicketNamesBySlug(
       ticketRulesRes.data.values ?? []
@@ -302,6 +315,14 @@ export class SheetsService {
     const cashInSheetM = cashRow?.m.sumE ?? 0;
     const cashInSheetTotal = cashInSheetL + cashInSheetM;
 
+    const outRow = outstandingRows.find(
+      (r) => r.sellerCode === normalizedSellerCode
+    );
+    const outstandingL = outRow?.outstandingL ?? 0;
+    const outstandingM = outRow?.outstandingM ?? 0;
+    const outstandingTotal = outRow?.outstanding ?? outstandingL + outstandingM;
+    const cashInAfterOutstanding = cashInSheetTotal - outstandingTotal;
+
     return {
       sellerCode: normalizedSellerCode,
       sales,
@@ -315,6 +336,10 @@ export class SheetsService {
       cashInSheetL,
       cashInSheetM,
       cashInSheetTotal,
+      outstandingL,
+      outstandingM,
+      outstandingTotal,
+      cashInAfterOutstanding,
       cardTotalPrimary: primaryCardTotal,
       cardTotalM: mCardTotal,
       cardTotalCombined: primaryCardTotal + mCardTotal,
