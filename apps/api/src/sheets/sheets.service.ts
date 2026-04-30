@@ -126,6 +126,14 @@ export type SellerBreakdownResult = {
   totalGross: number;
   totalCommission: number;
   totalHandIn: number;
+  /** Column C (Hand In) totals from L / M cash-in tabs for this seller. */
+  handInSheetL: number;
+  handInSheetM: number;
+  handInSheetTotal: number;
+  /** Column E (Cash In) from L / M cash-in tabs; displayed CASH IN = L + M. */
+  cashInSheetL: number;
+  cashInSheetM: number;
+  cashInSheetTotal: number;
   cardTotalPrimary: number;
   cardTotalM: number;
   cardTotalCombined: number;
@@ -240,7 +248,7 @@ export class SheetsService {
       throw new Error("SPREADSHEET_ID is not set");
     }
 
-    const [salesRes, ticketRulesRes, primaryCardTotal, mCardTotal] =
+    const [salesRes, ticketRulesRes, primaryCardTotal, mCardTotal, cashRows] =
       await Promise.all([
         client.spreadsheets.values.get({
           spreadsheetId,
@@ -262,6 +270,7 @@ export class SheetsService {
           this.mSquarePaymentsSheetName,
           normalizedSellerCode
         ),
+        this.getAllSellersCashInFromSheets(),
       ]);
 
     const ticketDisplayBySlug = parseTicketDisplayNameBySlug(
@@ -283,6 +292,16 @@ export class SheetsService {
       totalHandIn += sale.handInAmount;
     }
 
+    const cashRow = cashRows.find(
+      (r) => normalizeCashInSellerDigits(r.sellerId) === normalizedSellerCode
+    );
+    const handInSheetL = cashRow?.l.sumC ?? 0;
+    const handInSheetM = cashRow?.m.sumC ?? 0;
+    const handInSheetTotal = handInSheetL + handInSheetM;
+    const cashInSheetL = cashRow?.l.sumE ?? 0;
+    const cashInSheetM = cashRow?.m.sumE ?? 0;
+    const cashInSheetTotal = cashInSheetL + cashInSheetM;
+
     return {
       sellerCode: normalizedSellerCode,
       sales,
@@ -290,6 +309,12 @@ export class SheetsService {
       totalGross,
       totalCommission,
       totalHandIn,
+      handInSheetL,
+      handInSheetM,
+      handInSheetTotal,
+      cashInSheetL,
+      cashInSheetM,
+      cashInSheetTotal,
       cardTotalPrimary: primaryCardTotal,
       cardTotalM: mCardTotal,
       cardTotalCombined: primaryCardTotal + mCardTotal,

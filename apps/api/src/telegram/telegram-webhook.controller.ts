@@ -370,12 +370,11 @@ export class TelegramWebhookController {
       return;
     }
 
-    const messages = formatBreakdownMessagesHtml(breakdown);
+    const messages = formatBreakdownMessages(breakdown);
     for (const text of messages) {
       await telegramSendMessage(token, {
         chat_id: chatId,
         text,
-        parse_mode: "HTML",
       });
     }
   }
@@ -758,49 +757,46 @@ function escapeHtml(s: string): string {
     .replace(/"/g, "&quot;");
 }
 
-function formatBreakdownMessagesHtml(
-  breakdown: SellerBreakdownResult
-): string[] {
+function formatBreakdownMessages(breakdown: SellerBreakdownResult): string[] {
   const headerLines = [
     `BREAKDOWN — seller ${breakdown.sellerCode}`,
     "",
     `Uncashed sales: ${breakdown.saleCount}`,
     `Gross total: ${formatMoneyCompact(breakdown.totalGross)}`,
     `Commission total: ${formatMoneyCompact(breakdown.totalCommission)}`,
-    `Hand-in total: ${formatMoneyCompact(breakdown.totalHandIn)}`,
+    `Hand-in (L): ${formatMoneyCompact(breakdown.handInSheetL)}`,
+    `Hand-in (M): ${formatMoneyCompact(breakdown.handInSheetM)}`,
+    `Hand-in total: ${formatMoneyCompact(breakdown.handInSheetTotal)}`,
     `Card total (L): ${formatMoneyCompact(breakdown.cardTotalPrimary)}`,
     `Card total (M): ${formatMoneyCompact(breakdown.cardTotalM)}`,
     `Card total (combined): ${formatMoneyCompact(breakdown.cardTotalCombined)}`,
-    `CASH IN: ${formatMoneyCompact(breakdown.totalHandIn)}`,
+    `CASH IN: ${formatMoneyCompact(breakdown.cashInSheetTotal)}`,
   ];
+  const summary = headerLines.join("\n");
 
   if (breakdown.sales.length === 0) {
     return [
-      `<pre>${escapeHtml(
-        `${headerLines.join("\n")}\n\nNo uncashed sales found for this seller.`
-      )}</pre>`,
+      `${summary}\n\nAll Sales 📋\n\nNo uncashed sales found for this seller.`,
     ];
   }
 
   const entries = breakdown.sales.map((sale) => formatBreakdownSaleEntry(sale));
-  const tableHeaders = [
-    "QTY NAME : GROSS AMOUNT | GROSS COMMISSION | HAND IN",
-    "-----------------------------------------------------",
-  ];
+  const salesBlockTitle = "\n\nAll Sales 📋\n\n";
 
-  const limit = 3900;
+  const limit = 4000;
   const messages: string[] = [];
-  let current = `${headerLines.join("\n")}\n\n${tableHeaders.join("\n")}\n`;
+  let current = `${summary}${salesBlockTitle}`;
   for (const entry of entries) {
-    if (current.length + entry.length + 1 > limit) {
-      messages.push(`<pre>${escapeHtml(current.trimEnd())}</pre>`);
-      current = `${tableHeaders.join("\n")}\n${entry}\n`;
+    const next = `${current}${entry}\n`;
+    if (next.length > limit) {
+      messages.push(current.trimEnd());
+      current = `All Sales 📋 (continued)\n\n${entry}\n`;
       continue;
     }
-    current += `${entry}\n`;
+    current = next;
   }
   if (current.trim() !== "") {
-    messages.push(`<pre>${escapeHtml(current.trimEnd())}</pre>`);
+    messages.push(current.trimEnd());
   }
   return messages;
 }
