@@ -803,7 +803,7 @@ function formatBreakdownMessages(breakdown: SellerBreakdownResult): string[] {
     `Outstanding (L): ${formatMoneyCompact(breakdown.outstandingL)}`,
     `Outstanding (M): ${formatMoneyCompact(breakdown.outstandingM)}`,
     `Outstanding (total): ${formatMoneyCompact(breakdown.outstandingTotal)}`,
-    `CASH IN: ${formatMoneyCompact(breakdown.cashInAfterOutstanding)}`,
+    `CASH IN: ${formatMoneyCompact(breakdown.cashInIncludingOutstanding)}`,
   ];
   const summary = headerLines.join("\n");
 

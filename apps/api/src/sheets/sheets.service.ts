@@ -138,8 +138,8 @@ export type SellerBreakdownResult = {
   outstandingL: number;
   outstandingM: number;
   outstandingTotal: number;
-  /** Cash in from sheet minus combined outstanding (how CASH IN is shown in Telegram). */
-  cashInAfterOutstanding: number;
+  /** Sheet L+M cash-in plus combined outstanding (how CASH IN is shown in Telegram). */
+  cashInIncludingOutstanding: number;
   cardTotalPrimary: number;
   cardTotalM: number;
   cardTotalCombined: number;
@@ -321,7 +321,7 @@ export class SheetsService {
     const outstandingL = outRow?.outstandingL ?? 0;
     const outstandingM = outRow?.outstandingM ?? 0;
     const outstandingTotal = outRow?.outstanding ?? outstandingL + outstandingM;
-    const cashInAfterOutstanding = cashInSheetTotal - outstandingTotal;
+    const cashInIncludingOutstanding = cashInSheetTotal + outstandingTotal;
 
     return {
       sellerCode: normalizedSellerCode,
@@ -339,7 +339,7 @@ export class SheetsService {
       outstandingL,
       outstandingM,
       outstandingTotal,
-      cashInAfterOutstanding,
+      cashInIncludingOutstanding,
       cardTotalPrimary: primaryCardTotal,
       cardTotalM: mCardTotal,
       cardTotalCombined: primaryCardTotal + mCardTotal,
