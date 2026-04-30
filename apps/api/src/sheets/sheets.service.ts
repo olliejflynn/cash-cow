@@ -273,13 +273,13 @@ export class SheetsService {
         this.getAllSellersCashInFromSheets(),
       ]);
 
-    const ticketDisplayBySlug = parseTicketDisplayNameBySlug(
+    const ticketNamesBySlug = parseTicketNamesBySlug(
       ticketRulesRes.data.values ?? []
     );
     const sales = parseUncashedSalesRowsForSeller(
       salesRes.data.values ?? [],
       normalizedSellerCode,
-      ticketDisplayBySlug
+      ticketNamesBySlug
     );
 
     let totalGross = 0;
@@ -1666,8 +1666,10 @@ function parseSellerEmailRows(values: unknown[][]): SellerEmailRow[] {
   return out;
 }
 
-function parseTicketDisplayNameBySlug(values: unknown[][]): Map<string, string> {
-  const out = new Map<string, string>();
+function parseTicketNamesBySlug(
+  values: unknown[][]
+): Map<string, { displayName: string; depositName: string }> {
+  const out = new Map<string, { displayName: string; depositName: string }>();
   if (values.length === 0) return out;
 
   const header = values[0]?.map((v) => String(v ?? "").trim()) ?? [];
@@ -1677,15 +1679,23 @@ function parseTicketDisplayNameBySlug(values: unknown[][]): Map<string, string> 
   const displayIdx = header.findIndex(
     (h) => normSheetHeader(h) === "display_name"
   );
+  const depositIdx = header.findIndex(
+    (h) => normSheetHeader(h) === "deposit_name"
+  );
   const idxSlug = slugIdx >= 0 ? slugIdx : 0;
   const idxDisplay = displayIdx >= 0 ? displayIdx : 2;
+  const idxDeposit = depositIdx >= 0 ? depositIdx : 3;
 
   for (let i = 1; i < values.length; i++) {
     const row = values[i] ?? [];
     const slug = String(row[idxSlug] ?? "").trim();
     if (slug === "" || out.has(slug)) continue;
     const displayName = String(row[idxDisplay] ?? "").trim();
-    out.set(slug, displayName === "" ? slug : displayName);
+    const depositName = String(row[idxDeposit] ?? "").trim();
+    out.set(slug, {
+      displayName: displayName === "" ? slug : displayName,
+      depositName: depositName === "" ? displayName || slug : depositName,
+    });
   }
   return out;
 }
@@ -1693,7 +1703,10 @@ function parseTicketDisplayNameBySlug(values: unknown[][]): Map<string, string> 
 function parseUncashedSalesRowsForSeller(
   values: unknown[][],
   sellerCode: string,
-  ticketDisplayBySlug: ReadonlyMap<string, string>
+  ticketNamesBySlug: ReadonlyMap<
+    string,
+    { displayName: string; depositName: string }
+  >
 ): SellerUncashedSaleBreakdownRow[] {
   if (values.length < 2) return [];
   const header = values[0]?.map((v) => String(v ?? "").trim()) ?? [];
@@ -1745,8 +1758,14 @@ function parseUncashedSalesRowsForSeller(
     const ticketTypeSlug = String(
       ticketTypeIdx >= 0 ? row[ticketTypeIdx] ?? "" : ""
     ).trim();
+    const unitPricePaid = parseSheetMoneyNumber(
+      unitPricePaidIdx >= 0 ? row[unitPricePaidIdx] : 0
+    );
+    const ticketNames = ticketNamesBySlug.get(ticketTypeSlug);
     const ticketDisplayName =
-      ticketDisplayBySlug.get(ticketTypeSlug) ?? ticketTypeSlug;
+      Math.abs(unitPricePaid - 20) < 1e-9
+        ? ticketNames?.depositName ?? ticketNames?.displayName ?? ticketTypeSlug
+        : ticketNames?.displayName ?? ticketTypeSlug;
     const qty = parseSheetMoneyNumber(qtyIdx >= 0 ? row[qtyIdx] : 0);
     const orderStatus = String(
       orderStatusIdx >= 0 ? row[orderStatusIdx] ?? "" : ""
@@ -1759,9 +1778,7 @@ function parseUncashedSalesRowsForSeller(
       ticketTypeSlug,
       ticketDisplayName,
       qty,
-      unitPricePaid: parseSheetMoneyNumber(
-        unitPricePaidIdx >= 0 ? row[unitPricePaidIdx] : 0
-      ),
+      unitPricePaid,
       grossAmount: parseSheetMoneyNumber(
         grossAmountIdx >= 0 ? row[grossAmountIdx] : 0
       ),

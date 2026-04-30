@@ -20,8 +20,7 @@ import type {
 } from "../sheets/sheets.service";
 import { SheetsService } from "../sheets/sheets.service";
 
-const HELP_REPLY =
-  "This will display a list of commands.";
+const HELP_REPLY = "This will display a list of commands.";
 
 /** Telegram sends this when setWebhook included secret_token (name is case-insensitive). */
 const TELEGRAM_SECRET_HEADER = "X-Telegram-Bot-Api-Secret-Token";
@@ -124,7 +123,11 @@ export class TelegramWebhookController {
         });
         return { ok: true };
       }
-      await this.handleBreakdownCommand(token, chatId, breakdownParsed.sellerCode);
+      await this.handleBreakdownCommand(
+        token,
+        chatId,
+        breakdownParsed.sellerCode
+      );
       return { ok: true };
     }
 
@@ -301,7 +304,9 @@ export class TelegramWebhookController {
     }
 
     if (sellerCode != null) {
-      const row = rows.find((r) => normalizeSellerCode(r.sellerId) === sellerCode);
+      const row = rows.find(
+        (r) => normalizeSellerCode(r.sellerId) === sellerCode
+      );
       const outstanding = outstandingBySeller.get(sellerCode) ?? {
         outstandingL: 0,
         outstandingM: 0,
@@ -343,7 +348,11 @@ export class TelegramWebhookController {
       return;
     }
 
-    const table = formatAllBalancesHtml(rows, outstandingBySeller, emailBySeller);
+    const table = formatAllBalancesHtml(
+      rows,
+      outstandingBySeller,
+      emailBySeller
+    );
     await telegramSendMessage(token, {
       chat_id: chatId,
       text: table,
@@ -358,7 +367,9 @@ export class TelegramWebhookController {
   ): Promise<void> {
     let breakdown: SellerBreakdownResult;
     try {
-      breakdown = await this.sheetsService.getSellerBreakdownFromSheets(sellerCode);
+      breakdown = await this.sheetsService.getSellerBreakdownFromSheets(
+        sellerCode
+      );
     } catch (err: unknown) {
       const msg =
         err instanceof Error ? err.message : "Unknown error loading breakdown.";
@@ -375,6 +386,7 @@ export class TelegramWebhookController {
       await telegramSendMessage(token, {
         chat_id: chatId,
         text,
+        parse_mode: "HTML",
       });
     }
   }
@@ -430,7 +442,10 @@ function parseCashCommand(text: string): CashParseResult | null {
     return { ok: true, sellerCode };
   }
   if (parts.length > 3) {
-    return { ok: false, error: "Too many arguments. Use: /cash <seller_code> [<amount>]" };
+    return {
+      ok: false,
+      error: "Too many arguments. Use: /cash <seller_code> [<amount>]",
+    };
   }
   const amtRaw = (parts[2] ?? "").trim().replace(/,/g, "");
   const n = parseFloat(amtRaw);
@@ -470,7 +485,9 @@ function buildCashConfirmCallbackData(
   explicitAmount?: number
 ): string | null {
   const amountToken =
-    explicitAmount === undefined ? "A" : encodeAmountForCallbackToken(explicitAmount);
+    explicitAmount === undefined
+      ? "A"
+      : encodeAmountForCallbackToken(explicitAmount);
   const payload = `${CASH_CONFIRM_PREFIX}${sellerCode}|${amountToken}`;
   if (utf8ByteLength(payload) <= TELEGRAM_CALLBACK_DATA_MAX_BYTES) {
     return payload;
@@ -527,7 +544,9 @@ function formatCashPreview(p: SellerCashInPreview): string {
 function formatCashApplySuccess(r: SellerCashInApplyResult): string {
   const outMsg = r.outstandingRowDeleted
     ? "Outstanding row removed (balance cleared)."
-    : `New outstanding — L: ${formatMoney(r.newOutstandingL)}, M: ${formatMoney(r.newOutstandingM)}, Total: ${formatMoney(r.newOutstanding)}.`;
+    : `New outstanding — L: ${formatMoney(r.newOutstandingL)}, M: ${formatMoney(
+        r.newOutstandingM
+      )}, Total: ${formatMoney(r.newOutstanding)}.`;
   return (
     `Cash-in complete — seller ${r.sellerCode}\n\n` +
     `Amount applied: ${formatMoney(r.amountUsed)}\n` +
@@ -563,7 +582,9 @@ function isHelpCommand(text: string): boolean {
   return /^\/help(@\w+)?$/i.test(firstToken);
 }
 
-function parseBalanceCommand(text: string): { sellerCode: string | null } | null {
+function parseBalanceCommand(
+  text: string
+): { sellerCode: string | null } | null {
   const trimmed = text.trim();
   if (trimmed === "") return null;
   const parts = trimmed.split(/\s+/);
@@ -651,7 +672,12 @@ function formatAllBalancesHtml(
   }
   for (const [code, outstanding] of outstandingBySeller.entries()) {
     if (code === "" || bySeller.has(code)) continue;
-    bySeller.set(code, { l: 0, m: 0, total: outstanding.outstanding, outstanding: outstanding.outstanding });
+    bySeller.set(code, {
+      l: 0,
+      m: 0,
+      total: outstanding.outstanding,
+      outstanding: outstanding.outstanding,
+    });
   }
 
   const items = [...bySeller.entries()]
@@ -676,7 +702,7 @@ function formatAllBalancesHtml(
       m: item.m,
       outstanding: item.outstanding,
       total: item.total,
-    })),
+    }))
   );
 
   const sections = items.map((item) => {
@@ -723,7 +749,10 @@ function formatSellerCashSectionHtml(input: {
   const values =
     `${formatMoney(input.l).padStart(input.widths.l, " ")} | ` +
     `${formatMoney(input.m).padStart(input.widths.m, " ")} | ` +
-    `${formatMoney(input.outstanding).padStart(input.widths.outstanding, " ")} | ` +
+    `${formatMoney(input.outstanding).padStart(
+      input.widths.outstanding,
+      " "
+    )} | ` +
     `${formatMoney(input.total).padStart(input.widths.total, " ")}`;
 
   return (
@@ -733,18 +762,18 @@ function formatSellerCashSectionHtml(input: {
 }
 
 function computeBalanceGridWidths(
-  rows: Array<{ l: number; m: number; outstanding: number; total: number }>,
+  rows: Array<{ l: number; m: number; outstanding: number; total: number }>
 ): { l: number; m: number; outstanding: number; total: number } {
   return {
     l: Math.max("L".length, ...rows.map((row) => formatMoney(row.l).length)),
     m: Math.max("M".length, ...rows.map((row) => formatMoney(row.m).length)),
     outstanding: Math.max(
       "OUT".length,
-      ...rows.map((row) => formatMoney(row.outstanding).length),
+      ...rows.map((row) => formatMoney(row.outstanding).length)
     ),
     total: Math.max(
       "TOTAL".length,
-      ...rows.map((row) => formatMoney(row.total).length),
+      ...rows.map((row) => formatMoney(row.total).length)
     ),
   };
 }
@@ -767,8 +796,8 @@ function formatBreakdownMessages(breakdown: SellerBreakdownResult): string[] {
     `Hand-in (L): ${formatMoneyCompact(breakdown.handInSheetL)}`,
     `Hand-in (M): ${formatMoneyCompact(breakdown.handInSheetM)}`,
     `Hand-in total: ${formatMoneyCompact(breakdown.handInSheetTotal)}`,
-    `Card total (L): ${formatMoneyCompact(breakdown.cardTotalPrimary)}`,
-    `Card total (M): ${formatMoneyCompact(breakdown.cardTotalM)}`,
+    `Card (L): ${formatMoneyCompact(breakdown.cardTotalPrimary)}`,
+    `Card (M): ${formatMoneyCompact(breakdown.cardTotalM)}`,
     `Card total (combined): ${formatMoneyCompact(breakdown.cardTotalCombined)}`,
     `CASH IN: ${formatMoneyCompact(breakdown.cashInSheetTotal)}`,
   ];
@@ -776,41 +805,89 @@ function formatBreakdownMessages(breakdown: SellerBreakdownResult): string[] {
 
   if (breakdown.sales.length === 0) {
     return [
-      `${summary}\n\nAll Sales 📋\n\nNo uncashed sales found for this seller.`,
+      `${escapeHtml(summary)}\n\nAll Sales 📋\n<pre>${escapeHtml(
+        "No uncashed sales found for this seller."
+      )}</pre>`,
     ];
   }
 
-  const entries = breakdown.sales.map((sale) => formatBreakdownSaleEntry(sale));
-  const salesBlockTitle = "\n\nAll Sales 📋\n\n";
-
-  const limit = 4000;
+  const widths = computeBreakdownSaleWidths(breakdown.sales);
+  const entries = breakdown.sales.map((sale) =>
+    formatBreakdownSaleEntry(sale, widths)
+  );
+  const limit = 3800;
   const messages: string[] = [];
-  let current = `${summary}${salesBlockTitle}`;
+  let currentSummary = `${escapeHtml(summary)}\n\nAll Sales 📋\n`;
+  let currentBlock = "";
   for (const entry of entries) {
-    const next = `${current}${entry}\n`;
-    if (next.length > limit) {
-      messages.push(current.trimEnd());
-      current = `All Sales 📋 (continued)\n\n${entry}\n`;
+    const nextBlock = `${currentBlock}${entry}\n`;
+    const nextMessage = `${currentSummary}<pre>${escapeHtml(nextBlock.trimEnd())}</pre>`;
+    if (nextMessage.length > limit && currentBlock.trim() !== "") {
+      messages.push(
+        `${currentSummary}<pre>${escapeHtml(currentBlock.trimEnd())}</pre>`
+      );
+      currentSummary = "All Sales 📋 (continued)\n";
+      currentBlock = `${entry}\n`;
       continue;
     }
-    current = next;
+    currentBlock = nextBlock;
   }
-  if (current.trim() !== "") {
-    messages.push(current.trimEnd());
+  if (currentBlock.trim() !== "") {
+    messages.push(`${currentSummary}<pre>${escapeHtml(currentBlock.trimEnd())}</pre>`);
   }
   return messages;
 }
 
-function formatBreakdownSaleEntry(sale: SellerUncashedSaleBreakdownRow): string {
+function formatBreakdownSaleEntry(
+  sale: SellerUncashedSaleBreakdownRow,
+  widths: { qty: number; name: number; gross: number; commission: number; handIn: number }
+): string {
   const ticketDisplay =
-    sale.ticketDisplayName.trim() === "" ? sale.ticketTypeSlug : sale.ticketDisplayName;
-  const row = (
-    `X${formatNumberCompact(sale.qty)} ${ticketDisplay || "-"} : ` +
-    `${formatMoneyCompact(sale.grossAmount)} | ` +
-    `${formatMoneyCompact(sale.grossCommission)} | ` +
-    `${formatMoneyCompact(sale.handInAmount)}`
+    sale.ticketDisplayName.trim() === ""
+      ? sale.ticketTypeSlug
+      : sale.ticketDisplayName;
+  const qty = `X${formatNumberCompact(sale.qty)}`.padEnd(widths.qty, " ");
+  const name = (ticketDisplay || "-").padEnd(widths.name, " ");
+  const gross = formatMoneyCompact(sale.grossAmount).padStart(widths.gross, " ");
+  const commission = formatMoneyCompact(sale.grossCommission).padStart(
+    widths.commission,
+    " "
   );
+  const handIn = formatMoneyCompact(sale.handInAmount).padStart(widths.handIn, " ");
+  const row = `${qty} ${name} : ${gross} | ${commission} | ${handIn}`;
   return sale.isCancelled ? strikeThroughText(row) : row;
+}
+
+function computeBreakdownSaleWidths(
+  sales: SellerUncashedSaleBreakdownRow[]
+): { qty: number; name: number; gross: number; commission: number; handIn: number } {
+  return {
+    qty: Math.max(
+      2,
+      ...sales.map((sale) => `X${formatNumberCompact(sale.qty)}`.length)
+    ),
+    name: Math.max(
+      1,
+      ...sales.map((sale) =>
+        (sale.ticketDisplayName.trim() === ""
+          ? sale.ticketTypeSlug
+          : sale.ticketDisplayName || "-"
+        ).length
+      )
+    ),
+    gross: Math.max(
+      1,
+      ...sales.map((sale) => formatMoneyCompact(sale.grossAmount).length)
+    ),
+    commission: Math.max(
+      1,
+      ...sales.map((sale) => formatMoneyCompact(sale.grossCommission).length)
+    ),
+    handIn: Math.max(
+      1,
+      ...sales.map((sale) => formatMoneyCompact(sale.handInAmount).length)
+    ),
+  };
 }
 
 function formatMoneyCompact(n: number): string {
@@ -859,7 +936,9 @@ async function telegramSendMessage(
   token: string,
   payload: Record<string, unknown>
 ): Promise<void> {
-  const url = `https://api.telegram.org/bot${encodeURIComponent(token)}/sendMessage`;
+  const url = `https://api.telegram.org/bot${encodeURIComponent(
+    token
+  )}/sendMessage`;
   const maxAttempts = 4;
   let attempt = 0;
   let lastErr = "";
