@@ -805,7 +805,9 @@ function formatBreakdownMessages(breakdown: SellerBreakdownResult): string[] {
 
   if (breakdown.sales.length === 0) {
     return [
-      `${escapeHtml(summary)}\n\nAll Sales 📋\n<pre>${escapeHtml(
+      `${escapeHtml(
+        summary
+      )}\n\nAll Sales 📋 (PRICE | COMMISSION | HAND-IN)\n<pre>${escapeHtml(
         "No uncashed sales found for this seller."
       )}</pre>`,
     ];
@@ -838,7 +840,13 @@ function formatBreakdownMessages(breakdown: SellerBreakdownResult): string[] {
 
 function formatBreakdownSaleEntry(
   sale: SellerUncashedSaleBreakdownRow,
-  widths: { qty: number; name: number; gross: number; commission: number; handIn: number }
+  widths: {
+    qty: number;
+    name: number;
+    gross: number;
+    commission: number;
+    handIn: number;
+  }
 ): string {
   const ticketDisplay =
     sale.ticketDisplayName.trim() === ""
@@ -846,21 +854,31 @@ function formatBreakdownSaleEntry(
       : sale.ticketDisplayName;
   const qty = `X${formatNumberCompact(sale.qty)}`.padEnd(widths.qty, " ");
   const name = (ticketDisplay || "-").padEnd(widths.name, " ");
-  const gross = formatMoneyCompact(sale.grossAmount).padStart(widths.gross, " ");
+  const gross = formatMoneyCompact(sale.grossAmount).padStart(
+    widths.gross,
+    " "
+  );
   const commission = formatMoneyCompact(sale.grossCommission).padStart(
     widths.commission,
     " "
   );
-  const handIn = formatMoneyCompact(sale.handInAmount).padStart(widths.handIn, " ");
+  const handIn = formatMoneyCompact(sale.handInAmount).padStart(
+    widths.handIn,
+    " "
+  );
   const row = `${qty} ${name} : ${gross} | ${commission} | ${handIn}`;
   const rowText = sale.isCancelled ? strikeThroughText(row) : row;
   const orderNumber = String(sale.orderId ?? "").trim() || "-";
   return `<b>${escapeHtml(orderNumber)}</b> ${escapeHtml(rowText)}`;
 }
 
-function computeBreakdownSaleWidths(
-  sales: SellerUncashedSaleBreakdownRow[]
-): { qty: number; name: number; gross: number; commission: number; handIn: number } {
+function computeBreakdownSaleWidths(sales: SellerUncashedSaleBreakdownRow[]): {
+  qty: number;
+  name: number;
+  gross: number;
+  commission: number;
+  handIn: number;
+} {
   return {
     qty: Math.max(
       2,
@@ -868,11 +886,12 @@ function computeBreakdownSaleWidths(
     ),
     name: Math.max(
       1,
-      ...sales.map((sale) =>
-        (sale.ticketDisplayName.trim() === ""
-          ? sale.ticketTypeSlug
-          : sale.ticketDisplayName || "-"
-        ).length
+      ...sales.map(
+        (sale) =>
+          (sale.ticketDisplayName.trim() === ""
+            ? sale.ticketTypeSlug
+            : sale.ticketDisplayName || "-"
+          ).length
       )
     ),
     gross: Math.max(
