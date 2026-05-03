@@ -20,9 +20,9 @@ export const config = () => ({
     process.env.SQUARE_PAYMENTS_SHEET_NAME ?? "Square_payments",
   mSquarePaymentsSheetName:
     process.env.M_SQUARE_PAYMENTS_SHEET_NAME ?? "M Square_payments",
-  /** Telegram /all: L cash-in tab (column A seller id; C hand in, D card, E cash in). */
+  /** Telegram /cash: L cash-in tab (A seller_code … F CASH IN; see SheetsService aggregateCashInRowsBySeller). */
   lCashInSheetName: (process.env.L_CASH_IN_SHEET_NAME ?? "L CASH IN 🍻").trim(),
-  /** Telegram /all: M cash-in tab (same columns as L). */
+  /** Telegram /cash: M cash-in tab (same columns as L). */
   mCashInSheetName: (process.env.M_CASH_IN_SHEET_NAME ?? "M CASH IN 👑").trim(),
   /**
    * Outstanding tab: row 1 headers Seller_Code (A), Outstanding (B). Used by Telegram /cash.

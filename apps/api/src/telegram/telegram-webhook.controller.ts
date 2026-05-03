@@ -322,6 +322,7 @@ export class TelegramWebhookController {
       const lBreakdown: CashInTabAggregate = row?.l ?? {
         sumCollected: 0,
         sumC: 0,
+        sumCommission: 0,
         sumD: 0,
         sumE: 0,
         cashIn: 0,
@@ -329,6 +330,7 @@ export class TelegramWebhookController {
       const mBreakdown: CashInTabAggregate = row?.m ?? {
         sumCollected: 0,
         sumC: 0,
+        sumCommission: 0,
         sumD: 0,
         sumE: 0,
         cashIn: 0,
@@ -430,7 +432,7 @@ function parseCashCommand(text: string): CashParseResult | null {
       ok: false,
       error:
         "Usage: /cash <seller_code> [<amount>]\n" +
-        "Omit amount to use L+M cash-in (column E) from the sheet.",
+        "Omit amount to use L+M CASH IN totals from the sheet.",
     };
   }
   const sellerRaw = (parts[1] ?? "").trim();
@@ -521,12 +523,12 @@ function encodeAmountForCallbackToken(amount: number): string {
 
 function formatCashPreview(p: SellerCashInPreview): string {
   const amtNote = p.amountWasAuto
-    ? "Hand-in amount (auto, L column E + M column E)"
+    ? "Hand-in amount (auto, L CASH IN + M CASH IN)"
     : "Hand-in amount (you entered)";
   return (
     `Cash-in preview — seller ${p.sellerCode}\n\n` +
-    `L (column E): ${formatMoney(p.lCashE)}\n` +
-    `M (column E): ${formatMoney(p.mCashE)}\n` +
+    `L (CASH IN): ${formatMoney(p.lCashE)}\n` +
+    `M (CASH IN): ${formatMoney(p.mCashE)}\n` +
     `${amtNote}: ${formatMoney(p.amountUsed)}\n` +
     `Current outstanding L: ${formatMoney(p.currentOutstandingL)}\n` +
     `Current outstanding M: ${formatMoney(p.currentOutstandingM)}\n` +
@@ -626,15 +628,17 @@ function formatSingleSellerBalanceHtml(input: {
     "",
     "M SHEET",
     `Collected: ${formatMoney(m.sumCollected)}`,
-    `Card:      ${formatMoney(m.sumD)}`,
     `Hand In:   ${formatMoney(m.sumC)}`,
+    `Commission: ${formatMoney(m.sumCommission)}`,
+    `Card:      ${formatMoney(m.sumD)}`,
     `Cash In:   ${formatMoney(m.sumE)}`,
     `Out M:     ${formatMoney(outstandingM)}`,
     "",
     "L SHEET",
     `Collected: ${formatMoney(l.sumCollected)}`,
-    `Card:      ${formatMoney(l.sumD)}`,
     `Hand In:   ${formatMoney(l.sumC)}`,
+    `Commission: ${formatMoney(l.sumCommission)}`,
+    `Card:      ${formatMoney(l.sumD)}`,
     `Cash In:   ${formatMoney(l.sumE)}`,
     `Out L:     ${formatMoney(outstandingL)}`,
     "",

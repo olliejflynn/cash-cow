@@ -46,6 +46,8 @@ const SQUARE_PAYMENT_COLUMNS: (keyof SquarePaymentRow)[] = [
 export type CashInTabAggregate = {
   sumCollected: number;
   sumC: number;
+  /** Total Commission column. */
+  sumCommission: number;
   sumD: number;
   sumE: number;
   /** Hand in total − card amount (= sumC − sumD). */
@@ -127,11 +129,11 @@ export type SellerBreakdownResult = {
   totalGross: number;
   totalCommission: number;
   totalHandIn: number;
-  /** Column C (Hand In) totals from L / M cash-in tabs for this seller. */
+  /** Column C (Total Hand in) totals from L / M cash-in tabs for this seller. */
   handInSheetL: number;
   handInSheetM: number;
   handInSheetTotal: number;
-  /** Column E (Cash In) from L / M cash-in tabs; displayed CASH IN = L + M. */
+  /** Column F (CASH IN) from L / M cash-in tabs; displayed CASH IN = L + M. */
   cashInSheetL: number;
   cashInSheetM: number;
   cashInSheetTotal: number;
@@ -800,8 +802,9 @@ export class SheetsService {
   }
 
   /**
-   * Read L + M cash-in tabs (A:E), aggregate per seller id (column A).
-   * Per tab: cashIn = sum(hand in, C) − sum(card, D). Final total = L.cashIn + M.cashIn.
+   * Read L + M cash-in tabs (A:F), aggregate per seller (seller_code column).
+   * Sheet columns: Total collected, Total hand in, Total Commission, Total card, CASH IN.
+   * Per tab: cashIn = sum(hand in) − sum(card). Final total = L.cashIn + M.cashIn.
    */
   async getAllSellersCashInFromSheets(): Promise<SellerCashInRow[]> {
     const client = await this.getSheetsClient();
@@ -823,8 +826,8 @@ export class SheetsService {
       "Check M_CASH_IN_SHEET_NAME."
     );
 
-    const rangeL = `${a1SheetRangePrefix(titleL)}A:E`;
-    const rangeM = `${a1SheetRangePrefix(titleM)}A:E`;
+    const rangeL = `${a1SheetRangePrefix(titleL)}A:F`;
+    const rangeM = `${a1SheetRangePrefix(titleM)}A:F`;
 
     const batch = await client.spreadsheets.values.batchGet({
       spreadsheetId,
@@ -841,8 +844,20 @@ export class SheetsService {
     const sellerIds = new Set<string>([...mapL.keys(), ...mapM.keys()]);
     const out: SellerCashInRow[] = [];
     for (const sellerId of sellerIds) {
-      const lAgg = mapL.get(sellerId) ?? { sumCollected: 0, sumC: 0, sumD: 0, sumE: 0 };
-      const mAgg = mapM.get(sellerId) ?? { sumCollected: 0, sumC: 0, sumD: 0, sumE: 0 };
+      const lAgg = mapL.get(sellerId) ?? {
+        sumCollected: 0,
+        sumC: 0,
+        sumCommission: 0,
+        sumD: 0,
+        sumE: 0,
+      };
+      const mAgg = mapM.get(sellerId) ?? {
+        sumCollected: 0,
+        sumC: 0,
+        sumCommission: 0,
+        sumD: 0,
+        sumE: 0,
+      };
       const lCashIn = lAgg.sumC - lAgg.sumD;
       const mCashIn = mAgg.sumC - mAgg.sumD;
       out.push({
@@ -850,6 +865,7 @@ export class SheetsService {
         l: {
           sumCollected: lAgg.sumCollected,
           sumC: lAgg.sumC,
+          sumCommission: lAgg.sumCommission,
           sumD: lAgg.sumD,
           sumE: lAgg.sumE,
           cashIn: lCashIn,
@@ -857,6 +873,7 @@ export class SheetsService {
         m: {
           sumCollected: mAgg.sumCollected,
           sumC: mAgg.sumC,
+          sumCommission: mAgg.sumCommission,
           sumD: mAgg.sumD,
           sumE: mAgg.sumE,
           cashIn: mCashIn,
@@ -942,7 +959,7 @@ export class SheetsService {
 
   /**
    * Telegram /cash — preview only (no writes).
-   * @param explicitAmount `undefined` = use L column E + M column E; otherwise use this hand-in amount.
+   * @param explicitAmount `undefined` = use L CASH IN + M CASH IN; otherwise use this hand-in amount.
    */
   async previewSellerCashInFromSheets(
     sellerCode: string,
@@ -977,7 +994,7 @@ export class SheetsService {
 
   /**
    * Telegram /cash — apply after user confirms. Re-reads sheet values at execution time.
-   * @param explicitAmount `undefined` = auto (L E + M E); else use this amount.
+   * @param explicitAmount `undefined` = auto (L CASH IN + M CASH IN); else use this amount.
    */
   async applySellerCashInFromSheets(
     sellerCode: string,
@@ -1014,7 +1031,8 @@ export class SheetsService {
 
     const outstandingRowDeleted =
       Math.abs(splitOutstanding.totalOutstanding) < OUTSTANDING_ZERO_EPS &&
-      ctx.outstandingSheetRow1Based != null;
+      (ctx.outstandingPrimaryRow1Based != null ||
+        ctx.outstandingDuplicateRows1Based.length > 0);
     await this.writeOutstandingValue(
       client,
       spreadsheetId,
@@ -1022,7 +1040,8 @@ export class SheetsService {
       outstandingSheetId,
       sellerCode,
       splitOutstanding,
-      ctx.outstandingSheetRow1Based
+      ctx.outstandingPrimaryRow1Based,
+      ctx.outstandingDuplicateRows1Based
     );
 
     const salesUpdated = await this.markSalesLogCashedForSeller(
@@ -1066,7 +1085,8 @@ export class SheetsService {
     currentOutstandingL: number;
     currentOutstandingM: number;
     currentOutstanding: number;
-    outstandingSheetRow1Based: number | null;
+    outstandingPrimaryRow1Based: number | null;
+    outstandingDuplicateRows1Based: number[];
     salesLogMatchCount: number;
     squarePrimaryDeleteCount: number;
     squareMDeleteCount: number;
@@ -1101,11 +1121,13 @@ export class SheetsService {
       range: outRange,
     });
     const outValues = outRes.data.values ?? [];
-    const { currentOutstandingL, currentOutstandingM, currentOutstanding, row1Based } =
-      parseOutstandingForSeller(
-      outValues,
-      sellerCode
-    );
+    const {
+      currentOutstandingL,
+      currentOutstandingM,
+      currentOutstanding,
+      primaryRow1Based,
+      duplicateRows1Based,
+    } = parseOutstandingForSeller(outValues, sellerCode);
 
     const salesLogRes = await client.spreadsheets.values.get({
       spreadsheetId,
@@ -1137,7 +1159,8 @@ export class SheetsService {
       currentOutstandingL,
       currentOutstandingM,
       currentOutstanding,
-      outstandingSheetRow1Based: row1Based,
+      outstandingPrimaryRow1Based: primaryRow1Based,
+      outstandingDuplicateRows1Based: duplicateRows1Based,
       salesLogMatchCount,
       squarePrimaryDeleteCount: sqP,
       squareMDeleteCount: sqM,
@@ -1175,16 +1198,21 @@ export class SheetsService {
       outstandingM: number;
       totalOutstanding: number;
     },
-    existingRow1Based: number | null
+    primaryRow1Based: number | null,
+    duplicateRows1Based: number[]
   ): Promise<void> {
     const abs = Math.abs(splitOutstanding.totalOutstanding);
     if (abs < OUTSTANDING_ZERO_EPS) {
-      if (existingRow1Based != null) {
+      const rowsToDelete = [
+        ...(primaryRow1Based != null ? [primaryRow1Based] : []),
+        ...duplicateRows1Based,
+      ];
+      if (rowsToDelete.length > 0) {
         await this.deleteSheetRowsBy1BasedIndices(
           client,
           spreadsheetId,
           sheetId,
-          [existingRow1Based]
+          rowsToDelete
         );
       }
       return;
@@ -1192,15 +1220,23 @@ export class SheetsService {
 
     const cellL = String(splitOutstanding.outstandingL);
     const cellM = String(splitOutstanding.outstandingM);
-    if (existingRow1Based != null) {
-      const colB = `${rangePrefix}B${existingRow1Based}`;
-      const colC = `${rangePrefix}C${existingRow1Based}`;
+    if (primaryRow1Based != null) {
+      const colB = `${rangePrefix}B${primaryRow1Based}`;
+      const colC = `${rangePrefix}C${primaryRow1Based}`;
       await client.spreadsheets.values.update({
         spreadsheetId,
         range: `${colB}:${colC}`,
         valueInputOption: "USER_ENTERED",
         requestBody: { values: [[cellL, cellM]] },
       });
+      if (duplicateRows1Based.length > 0) {
+        await this.deleteSheetRowsBy1BasedIndices(
+          client,
+          spreadsheetId,
+          sheetId,
+          duplicateRows1Based
+        );
+      }
       return;
     }
 
@@ -1552,33 +1588,82 @@ function normalizeCashInSellerDigits(value: string): string {
   return String(value ?? "").replace(/\D/g, "");
 }
 
+/** First matching normalized header among candidates (cash-in tabs). */
+function findCashInColumnIndex(header: string[], candidates: string[]): number {
+  for (const c of candidates) {
+    const idx = header.findIndex((h) => h === c);
+    if (idx >= 0) return idx;
+  }
+  return -1;
+}
+
 function aggregateCashInRowsBySeller(
   rows: unknown[][]
-): Map<string, { sumCollected: number; sumC: number; sumD: number; sumE: number }> {
+): Map<
+  string,
+  {
+    sumCollected: number;
+    sumC: number;
+    sumCommission: number;
+    sumD: number;
+    sumE: number;
+  }
+> {
   const map = new Map<
     string,
-    { sumCollected: number; sumC: number; sumD: number; sumE: number }
+    {
+      sumCollected: number;
+      sumC: number;
+      sumCommission: number;
+      sumD: number;
+      sumE: number;
+    }
   >();
   const header = (rows[0] ?? []).map((cell) => normSheetHeader(String(cell ?? "")));
-  const idxSeller = header.findIndex((h) => h === "seller_id");
-  const idxCollected = header.findIndex((h) => h === "total_collected");
-  const idxHandIn = header.findIndex((h) => h === "total_hand_in");
-  const idxCard = header.findIndex((h) => h === "card_amount");
-  const idxCashIn = header.findIndex((h) => h === "cash_in");
+  const idxSeller = findCashInColumnIndex(header, ["seller_code", "seller_id"]);
+  const idxCollected = findCashInColumnIndex(header, ["total_collected"]);
+  const idxHandIn = findCashInColumnIndex(header, ["total_hand_in"]);
+  const idxCommission = findCashInColumnIndex(header, ["total_commission"]);
+  const idxCard = findCashInColumnIndex(header, ["total_card", "card_amount"]);
+  const idxCashIn = findCashInColumnIndex(header, ["cash_in"]);
   const hasHeader = idxSeller >= 0;
   const start = hasHeader ? 1 : 0;
 
+  // Positional fallbacks: seller, collected, hand in, commission, card, cash in (6 columns).
+  const fbSeller = 0;
+  const fbCollected = 1;
+  const fbHandIn = 2;
+  const fbCommission = 3;
+  const fbCard = 4;
+  const fbCashIn = 5;
+
   for (let i = start; i < rows.length; i++) {
     const row = rows[i] ?? [];
-    const sellerId = String(row[idxSeller >= 0 ? idxSeller : 0] ?? "").trim();
+    const sellerId = String(row[idxSeller >= 0 ? idxSeller : fbSeller] ?? "").trim();
     if (sellerId === "") continue;
-    const collected = parseSheetMoneyNumber(row[idxCollected >= 0 ? idxCollected : 1]);
-    const c = parseSheetMoneyNumber(row[idxHandIn >= 0 ? idxHandIn : 2]);
-    const d = parseSheetMoneyNumber(row[idxCard >= 0 ? idxCard : 3]);
-    const e = parseSheetMoneyNumber(row[idxCashIn >= 0 ? idxCashIn : 4]);
-    const cur = map.get(sellerId) ?? { sumCollected: 0, sumC: 0, sumD: 0, sumE: 0 };
+    const collected = parseSheetMoneyNumber(
+      row[idxCollected >= 0 ? idxCollected : fbCollected]
+    );
+    const c = parseSheetMoneyNumber(row[idxHandIn >= 0 ? idxHandIn : fbHandIn]);
+    let commission = 0;
+    if (idxCommission >= 0) {
+      commission = parseSheetMoneyNumber(row[idxCommission]);
+    } else if (!hasHeader) {
+      commission = parseSheetMoneyNumber(row[fbCommission]);
+    }
+    const d = parseSheetMoneyNumber(row[idxCard >= 0 ? idxCard : fbCard]);
+    const e = parseSheetMoneyNumber(row[idxCashIn >= 0 ? idxCashIn : fbCashIn]);
+    const cur =
+      map.get(sellerId) ?? {
+        sumCollected: 0,
+        sumC: 0,
+        sumCommission: 0,
+        sumD: 0,
+        sumE: 0,
+      };
     cur.sumCollected += collected;
     cur.sumC += c;
+    cur.sumCommission += commission;
     cur.sumD += d;
     cur.sumE += e;
     map.set(sellerId, cur);
@@ -1608,14 +1693,16 @@ function parseOutstandingForSeller(
   currentOutstandingL: number;
   currentOutstandingM: number;
   currentOutstanding: number;
-  row1Based: number | null;
+  primaryRow1Based: number | null;
+  duplicateRows1Based: number[];
 } {
   if (values.length === 0) {
     return {
       currentOutstandingL: 0,
       currentOutstandingM: 0,
       currentOutstanding: 0,
-      row1Based: null,
+      primaryRow1Based: null,
+      duplicateRows1Based: [],
     };
   }
   const headerRow = values[0] ?? [];
@@ -1637,6 +1724,11 @@ function parseOutstandingForSeller(
       'Outstanding tab row 1 must include headers "Seller_Code", "Outstanding L", and "Outstanding M".'
     );
   }
+
+  let sumL = 0;
+  let sumM = 0;
+  let primaryRow1Based: number | null = null;
+  const duplicateRows1Based: number[] = [];
   for (let i = 1; i < values.length; i++) {
     const row = values[i] ?? [];
     const rowSeller = normalizeCashInSellerDigits(String(row[idxSeller] ?? ""));
@@ -1645,18 +1737,22 @@ function parseOutstandingForSeller(
     const outstandingM = hasSplit
       ? parseSheetMoneyNumber(row[idxOutM])
       : parseSheetMoneyNumber(row[idxLegacyOut]);
-    return {
-      currentOutstandingL: outstandingL,
-      currentOutstandingM: outstandingM,
-      currentOutstanding: outstandingL + outstandingM,
-      row1Based: i + 1,
-    };
+    sumL += outstandingL;
+    sumM += outstandingM;
+    const row1Based = i + 1;
+    if (primaryRow1Based == null) {
+      primaryRow1Based = row1Based;
+    } else {
+      duplicateRows1Based.push(row1Based);
+    }
   }
+
   return {
-    currentOutstandingL: 0,
-    currentOutstandingM: 0,
-    currentOutstanding: 0,
-    row1Based: null,
+    currentOutstandingL: sumL,
+    currentOutstandingM: sumM,
+    currentOutstanding: sumL + sumM,
+    primaryRow1Based,
+    duplicateRows1Based,
   };
 }
 
@@ -1681,7 +1777,8 @@ function parseAllOutstandingRows(values: unknown[][]): SellerOutstandingRow[] {
       'Outstanding tab row 1 must include headers "Seller_Code", "Outstanding L", and "Outstanding M".'
     );
   }
-  const out: SellerOutstandingRow[] = [];
+  const aggregates = new Map<string, { outstandingL: number; outstandingM: number }>();
+  const order: string[] = [];
   for (let i = 1; i < values.length; i++) {
     const row = values[i] ?? [];
     const sellerCode = normalizeCashInSellerDigits(String(row[idxSeller] ?? ""));
@@ -1690,14 +1787,25 @@ function parseAllOutstandingRows(values: unknown[][]): SellerOutstandingRow[] {
     const outstandingM = hasSplit
       ? parseSheetMoneyNumber(row[idxOutM])
       : parseSheetMoneyNumber(row[idxLegacyOut]);
-    out.push({
-      sellerCode,
-      outstandingL,
-      outstandingM,
-      outstanding: outstandingL + outstandingM,
-    });
+    const existing = aggregates.get(sellerCode);
+    if (existing == null) {
+      aggregates.set(sellerCode, { outstandingL, outstandingM });
+      order.push(sellerCode);
+    } else {
+      existing.outstandingL += outstandingL;
+      existing.outstandingM += outstandingM;
+    }
   }
-  return out;
+
+  return order.map((sellerCode) => {
+    const totals = aggregates.get(sellerCode) ?? { outstandingL: 0, outstandingM: 0 };
+    return {
+      sellerCode,
+      outstandingL: totals.outstandingL,
+      outstandingM: totals.outstandingM,
+      outstanding: totals.outstandingL + totals.outstandingM,
+    };
+  });
 }
 
 function splitOutstandingByPriority(
