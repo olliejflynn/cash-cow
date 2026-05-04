@@ -928,7 +928,9 @@ function formatBreakdownSaleEntry(
   );
   const orderNumber = String(sale.orderId ?? "").trim() || "-";
   if (sale.isCancelled) {
-    return `<b>${escapeHtml(orderNumber)}</b> CANCELED`;
+    return `<b>${escapeHtml(orderNumber)}</b> ${escapeHtml(
+      `${qty} ${name} : CANCELED`
+    )}`;
   }
   const row = `${qty} ${name} : ${gross} | ${commission} | ${handIn}`;
   return `<b>${escapeHtml(orderNumber)}</b> ${escapeHtml(row)}`;
