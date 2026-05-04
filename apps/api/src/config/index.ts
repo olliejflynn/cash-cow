@@ -24,6 +24,8 @@ export const config = () => ({
   lCashInSheetName: (process.env.L_CASH_IN_SHEET_NAME ?? "L CASH IN 🍻").trim(),
   /** Telegram /cash: M cash-in tab (same columns as L). */
   mCashInSheetName: (process.env.M_CASH_IN_SHEET_NAME ?? "M CASH IN 👑").trim(),
+  /** Telegram /cash: B (Dolphin) cash-in tab (same columns as L/M). */
+  bCashInSheetName: (process.env.B_CASH_IN_SHEET_NAME ?? "B CASH IN 🐬").trim(),
   /**
    * Outstanding tab: row 1 headers Seller_Code (A), Outstanding (B). Used by Telegram /cash.
    */
@@ -32,6 +34,8 @@ export const config = () => ({
   salesLogCashedColumnName: (
     process.env.SALES_LOG_CASHED_COLUMN_NAME ?? "cashed?"
   ).trim(),
+  /** Sales_Log Category (Company) label used for Dolphin-only cash-in checkbox updates. */
+  dolphinCategoryLabel: (process.env.DOLPHIN_CATEGORY_LABEL ?? "dolphin").trim(),
   defaultHandInPercent: parseFloat(
     process.env.DEFAULT_HAND_IN_PERCENT ?? "100"
   ),

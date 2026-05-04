@@ -42,7 +42,7 @@ const SQUARE_PAYMENT_COLUMNS: (keyof SquarePaymentRow)[] = [
   "status",
 ];
 
-/** One tab’s aggregates for a seller (L or M cash-in sheet). */
+/** One tab’s aggregates for a seller (L, M, or B cash-in sheet). */
 export type CashInTabAggregate = {
   sumCollected: number;
   sumC: number;
@@ -54,11 +54,12 @@ export type CashInTabAggregate = {
   cashIn: number;
 };
 
-/** Per-seller cash in from L + M tabs (final total = L.cashIn + M.cashIn). */
+/** Per-seller cash in from L + M + B tabs. */
 export type SellerCashInRow = {
   sellerId: string;
   l: CashInTabAggregate;
   m: CashInTabAggregate;
+  b: CashInTabAggregate;
   finalTotal: number;
 };
 
@@ -67,13 +68,16 @@ export type SellerCashInPreview = {
   sellerCode: string;
   lCashE: number;
   mCashE: number;
+  bCashE: number;
   amountWasAuto: boolean;
   amountUsed: number;
   currentOutstandingL: number;
   currentOutstandingM: number;
+  currentOutstandingB: number;
   currentOutstanding: number;
   newOutstandingL: number;
   newOutstandingM: number;
+  newOutstandingB: number;
   newOutstanding: number;
   salesLogRowsToUpdate: number;
   squareRowsPrimary: number;
@@ -86,6 +90,7 @@ export type SellerCashInApplyResult = {
   amountUsed: number;
   newOutstandingL: number;
   newOutstandingM: number;
+  newOutstandingB: number;
   newOutstanding: number;
   outstandingRowDeleted: boolean;
   salesLogRowsUpdated: number;
@@ -98,6 +103,7 @@ export type SellerOutstandingRow = {
   sellerCode: string;
   outstandingL: number;
   outstandingM: number;
+  outstandingB: number;
   outstanding: number;
 };
 
@@ -129,19 +135,22 @@ export type SellerBreakdownResult = {
   totalGross: number;
   totalCommission: number;
   totalHandIn: number;
-  /** Column C (Total Hand in) totals from L / M cash-in tabs for this seller. */
+  /** Column C (Total Hand in) totals from L / M / B cash-in tabs for this seller. */
   handInSheetL: number;
   handInSheetM: number;
+  handInSheetB: number;
   handInSheetTotal: number;
-  /** Column F (CASH IN) from L / M cash-in tabs; displayed CASH IN = L + M. */
+  /** Column F (CASH IN) from L / M / B cash-in tabs. */
   cashInSheetL: number;
   cashInSheetM: number;
+  cashInSheetB: number;
   cashInSheetTotal: number;
-  /** Outstanding tab (L / M / combined). */
+  /** Outstanding tab (L / M / B / combined). */
   outstandingL: number;
   outstandingM: number;
+  outstandingB: number;
   outstandingTotal: number;
-  /** Sheet L+M cash-in plus combined outstanding (how CASH IN is shown in Telegram). */
+  /** Sheet L+M+B cash-in plus combined outstanding (how CASH IN is shown in Telegram). */
   cashInIncludingOutstanding: number;
   cardTotalPrimary: number;
   cardTotalM: number;
@@ -163,8 +172,10 @@ export class SheetsService {
   private usersSheetName: string = "users";
   private lCashInSheetName: string = "L CASH IN 🍻";
   private mCashInSheetName: string = "M CASH IN 👑";
+  private bCashInSheetName: string = "B CASH IN 🐬";
   private outstandingSheetName: string = "Outstanding";
   private salesLogCashedColumnName: string = "cashed?";
+  private dolphinCategoryLabel: string = "dolphin";
 
   constructor(private readonly config: ConfigService) {
     this.spreadsheetId = this.config.get<string>("spreadsheetId") ?? "";
@@ -184,10 +195,14 @@ export class SheetsService {
       this.config.get<string>("lCashInSheetName") ?? "L CASH IN 🍻";
     this.mCashInSheetName =
       this.config.get<string>("mCashInSheetName") ?? "M CASH IN 👑";
+    this.bCashInSheetName =
+      this.config.get<string>("bCashInSheetName") ?? "B CASH IN 🐬";
     this.outstandingSheetName =
       this.config.get<string>("outstandingSheetName") ?? "Outstanding";
     this.salesLogCashedColumnName =
       this.config.get<string>("salesLogCashedColumnName") ?? "cashed?";
+    this.dolphinCategoryLabel =
+      this.config.get<string>("dolphinCategoryLabel") ?? "dolphin";
   }
 
   private async getSheetsClient(): Promise<sheets_v4.Sheets> {
@@ -313,17 +328,21 @@ export class SheetsService {
     );
     const handInSheetL = cashRow?.l.sumC ?? 0;
     const handInSheetM = cashRow?.m.sumC ?? 0;
-    const handInSheetTotal = handInSheetL + handInSheetM;
+    const handInSheetB = cashRow?.b.sumC ?? 0;
+    const handInSheetTotal = handInSheetL + handInSheetM + handInSheetB;
     const cashInSheetL = cashRow?.l.sumE ?? 0;
     const cashInSheetM = cashRow?.m.sumE ?? 0;
-    const cashInSheetTotal = cashInSheetL + cashInSheetM;
+    const cashInSheetB = cashRow?.b.sumE ?? 0;
+    const cashInSheetTotal = cashInSheetL + cashInSheetM + cashInSheetB;
 
     const outRow = outstandingRows.find(
       (r) => r.sellerCode === normalizedSellerCode
     );
     const outstandingL = outRow?.outstandingL ?? 0;
     const outstandingM = outRow?.outstandingM ?? 0;
-    const outstandingTotal = outRow?.outstanding ?? outstandingL + outstandingM;
+    const outstandingB = outRow?.outstandingB ?? 0;
+    const outstandingTotal =
+      outRow?.outstanding ?? outstandingL + outstandingM + outstandingB;
     const cashInIncludingOutstanding = cashInSheetTotal + outstandingTotal;
 
     return {
@@ -335,12 +354,15 @@ export class SheetsService {
       totalHandIn,
       handInSheetL,
       handInSheetM,
+      handInSheetB,
       handInSheetTotal,
       cashInSheetL,
       cashInSheetM,
+      cashInSheetB,
       cashInSheetTotal,
       outstandingL,
       outstandingM,
+      outstandingB,
       outstandingTotal,
       cashInIncludingOutstanding,
       cardTotalPrimary: primaryCardTotal,
@@ -802,9 +824,9 @@ export class SheetsService {
   }
 
   /**
-   * Read L + M cash-in tabs (A:F), aggregate per seller (seller_code column).
+   * Read L + M + B cash-in tabs (A:F), aggregate per seller (seller_code column).
    * Sheet columns: Total collected, Total hand in, Total Commission, Total card, CASH IN.
-   * Per tab: cashIn = sum(hand in) − sum(card). Final total = L.cashIn + M.cashIn.
+   * Per tab: cashIn = sum(hand in) − sum(card). Final total = L.cashIn + M.cashIn + B.cashIn.
    */
   async getAllSellersCashInFromSheets(): Promise<SellerCashInRow[]> {
     const client = await this.getSheetsClient();
@@ -825,23 +847,32 @@ export class SheetsService {
       this.mCashInSheetName,
       "Check M_CASH_IN_SHEET_NAME."
     );
+    const titleB = await this.resolveSheetTitleForConfiguredTab(
+      client,
+      spreadsheetId,
+      this.bCashInSheetName,
+      "Check B_CASH_IN_SHEET_NAME."
+    );
 
     const rangeL = `${a1SheetRangePrefix(titleL)}A:F`;
     const rangeM = `${a1SheetRangePrefix(titleM)}A:F`;
+    const rangeB = `${a1SheetRangePrefix(titleB)}A:F`;
 
     const batch = await client.spreadsheets.values.batchGet({
       spreadsheetId,
-      ranges: [rangeL, rangeM],
+      ranges: [rangeL, rangeM, rangeB],
     });
 
     const valueRanges = batch.data.valueRanges ?? [];
     const rowsL = valueRanges[0]?.values ?? [];
     const rowsM = valueRanges[1]?.values ?? [];
+    const rowsB = valueRanges[2]?.values ?? [];
 
     const mapL = aggregateCashInRowsBySeller(rowsL as unknown[][]);
     const mapM = aggregateCashInRowsBySeller(rowsM as unknown[][]);
+    const mapB = aggregateCashInRowsBySeller(rowsB as unknown[][]);
 
-    const sellerIds = new Set<string>([...mapL.keys(), ...mapM.keys()]);
+    const sellerIds = new Set<string>([...mapL.keys(), ...mapM.keys(), ...mapB.keys()]);
     const out: SellerCashInRow[] = [];
     for (const sellerId of sellerIds) {
       const lAgg = mapL.get(sellerId) ?? {
@@ -858,8 +889,16 @@ export class SheetsService {
         sumD: 0,
         sumE: 0,
       };
+      const bAgg = mapB.get(sellerId) ?? {
+        sumCollected: 0,
+        sumC: 0,
+        sumCommission: 0,
+        sumD: 0,
+        sumE: 0,
+      };
       const lCashIn = lAgg.sumC - lAgg.sumD;
       const mCashIn = mAgg.sumC - mAgg.sumD;
+      const bCashIn = bAgg.sumC - bAgg.sumD;
       out.push({
         sellerId,
         l: {
@@ -878,13 +917,21 @@ export class SheetsService {
           sumE: mAgg.sumE,
           cashIn: mCashIn,
         },
-        finalTotal: lCashIn + mCashIn,
+        b: {
+          sumCollected: bAgg.sumCollected,
+          sumC: bAgg.sumC,
+          sumCommission: bAgg.sumCommission,
+          sumD: bAgg.sumD,
+          sumE: bAgg.sumE,
+          cashIn: bCashIn,
+        },
+        finalTotal: lCashIn + mCashIn + bCashIn,
       });
     }
     return out;
   }
 
-  /** Read all outstanding balances from Outstanding tab headers Seller_Code / Outstanding L / Outstanding M. */
+  /** Read all outstanding balances from Outstanding tab headers Seller_Code / Outstanding L / Outstanding M / Outstanding B. */
   async getAllOutstandingBalances(): Promise<SellerOutstandingRow[]> {
     const client = await this.getSheetsClient();
     const spreadsheetId = this.spreadsheetId.trim();
@@ -897,7 +944,7 @@ export class SheetsService {
       this.outstandingSheetName,
       "Check OUTSTANDING_SHEET_NAME."
     );
-    const range = `${a1SheetRangePrefix(title)}A:C`;
+    const range = `${a1SheetRangePrefix(title)}A:D`;
     const response = await client.spreadsheets.values.get({
       spreadsheetId,
       range,
@@ -959,7 +1006,7 @@ export class SheetsService {
 
   /**
    * Telegram /cash — preview only (no writes).
-   * @param explicitAmount `undefined` = use L CASH IN + M CASH IN; otherwise use this hand-in amount.
+   * @param explicitAmount `undefined` = use L + M + B CASH IN totals; otherwise use this hand-in amount.
    */
   async previewSellerCashInFromSheets(
     sellerCode: string,
@@ -967,24 +1014,34 @@ export class SheetsService {
   ): Promise<SellerCashInPreview> {
     const ctx = await this.loadCashInContextForSeller(sellerCode);
     const amountWasAuto = explicitAmount === undefined;
-    const amountUsed = amountWasAuto ? ctx.lCashE + ctx.mCashE : explicitAmount;
+    const amountUsed = amountWasAuto
+      ? ctx.lCashE + ctx.mCashE + ctx.bCashE
+      : explicitAmount;
     if (!Number.isFinite(amountUsed)) {
       throw new Error("Amount is not a valid number.");
     }
     const newOutstanding =
-      ctx.lCashE + ctx.mCashE + ctx.currentOutstanding - amountUsed;
-    const splitOutstanding = splitOutstandingByPriority(newOutstanding, ctx.mCashE);
+      ctx.lCashE + ctx.mCashE + ctx.bCashE + ctx.currentOutstanding - amountUsed;
+    const splitOutstanding = splitOutstandingByPriority(
+      newOutstanding,
+      ctx.mCashE,
+      ctx.lCashE,
+      ctx.bCashE
+    );
     return {
       sellerCode,
       lCashE: ctx.lCashE,
       mCashE: ctx.mCashE,
+      bCashE: ctx.bCashE,
       amountWasAuto,
       amountUsed,
       currentOutstandingL: ctx.currentOutstandingL,
       currentOutstandingM: ctx.currentOutstandingM,
+      currentOutstandingB: ctx.currentOutstandingB,
       currentOutstanding: ctx.currentOutstanding,
       newOutstandingL: splitOutstanding.outstandingL,
       newOutstandingM: splitOutstanding.outstandingM,
+      newOutstandingB: splitOutstanding.outstandingB,
       newOutstanding,
       salesLogRowsToUpdate: ctx.salesLogMatchCount,
       squareRowsPrimary: ctx.squarePrimaryDeleteCount,
@@ -994,7 +1051,7 @@ export class SheetsService {
 
   /**
    * Telegram /cash — apply after user confirms. Re-reads sheet values at execution time.
-   * @param explicitAmount `undefined` = auto (L CASH IN + M CASH IN); else use this amount.
+   * @param explicitAmount `undefined` = auto (L + M + B CASH IN); else use this amount.
    */
   async applySellerCashInFromSheets(
     sellerCode: string,
@@ -1008,13 +1065,20 @@ export class SheetsService {
 
     const ctx = await this.loadCashInContextForSeller(sellerCode);
     const amountUsed =
-      explicitAmount === undefined ? ctx.lCashE + ctx.mCashE : explicitAmount;
+      explicitAmount === undefined
+        ? ctx.lCashE + ctx.mCashE + ctx.bCashE
+        : explicitAmount;
     if (!Number.isFinite(amountUsed)) {
       throw new Error("Amount is not a valid number.");
     }
     const newOutstanding =
-      ctx.lCashE + ctx.mCashE + ctx.currentOutstanding - amountUsed;
-    const splitOutstanding = splitOutstandingByPriority(newOutstanding, ctx.mCashE);
+      ctx.lCashE + ctx.mCashE + ctx.bCashE + ctx.currentOutstanding - amountUsed;
+    const splitOutstanding = splitOutstandingByPriority(
+      newOutstanding,
+      ctx.mCashE,
+      ctx.lCashE,
+      ctx.bCashE
+    );
 
     const outstandingTitle = await this.resolveSheetTitleForConfiguredTab(
       client,
@@ -1047,27 +1111,34 @@ export class SheetsService {
     const salesUpdated = await this.markSalesLogCashedForSeller(
       client,
       spreadsheetId,
-      sellerCode
+      sellerCode,
+      ctx.bCashE > 0 ? this.dolphinCategoryLabel : undefined
     );
 
-    const delP = await this.deleteSquarePaymentRowsForSeller(
-      client,
-      spreadsheetId,
-      this.squarePaymentsSheetName,
-      sellerCode
-    );
-    const delM = await this.deleteSquarePaymentRowsForSeller(
-      client,
-      spreadsheetId,
-      this.mSquarePaymentsSheetName,
-      sellerCode
-    );
+    let delP = 0;
+    let delM = 0;
+    const shouldSkipSquareDeletes = ctx.bCashE > 0 && ctx.lCashE + ctx.mCashE === 0;
+    if (!shouldSkipSquareDeletes) {
+      delP = await this.deleteSquarePaymentRowsForSeller(
+        client,
+        spreadsheetId,
+        this.squarePaymentsSheetName,
+        sellerCode
+      );
+      delM = await this.deleteSquarePaymentRowsForSeller(
+        client,
+        spreadsheetId,
+        this.mSquarePaymentsSheetName,
+        sellerCode
+      );
+    }
 
     return {
       sellerCode,
       amountUsed,
       newOutstandingL: splitOutstanding.outstandingL,
       newOutstandingM: splitOutstanding.outstandingM,
+      newOutstandingB: splitOutstanding.outstandingB,
       newOutstanding:
         Math.abs(splitOutstanding.totalOutstanding) < OUTSTANDING_ZERO_EPS
           ? 0
@@ -1082,8 +1153,10 @@ export class SheetsService {
   private async loadCashInContextForSeller(sellerCode: string): Promise<{
     lCashE: number;
     mCashE: number;
+    bCashE: number;
     currentOutstandingL: number;
     currentOutstandingM: number;
+    currentOutstandingB: number;
     currentOutstanding: number;
     outstandingPrimaryRow1Based: number | null;
     outstandingDuplicateRows1Based: number[];
@@ -1103,11 +1176,12 @@ export class SheetsService {
     );
     if (cash == null) {
       throw new Error(
-        `Seller ${sellerCode} not found on L/M cash-in tabs.`
+        `Seller ${sellerCode} not found on L/M/B cash-in tabs.`
       );
     }
     const lCashE = cash.l.sumE;
     const mCashE = cash.m.sumE;
+    const bCashE = cash.b.sumE;
 
     const outstandingTitle = await this.resolveSheetTitleForConfiguredTab(
       client,
@@ -1115,7 +1189,7 @@ export class SheetsService {
       this.outstandingSheetName,
       "Check OUTSTANDING_SHEET_NAME."
     );
-    const outRange = `${a1SheetRangePrefix(outstandingTitle)}A:C`;
+    const outRange = `${a1SheetRangePrefix(outstandingTitle)}A:D`;
     const outRes = await client.spreadsheets.values.get({
       spreadsheetId,
       range: outRange,
@@ -1124,6 +1198,7 @@ export class SheetsService {
     const {
       currentOutstandingL,
       currentOutstandingM,
+      currentOutstandingB,
       currentOutstanding,
       primaryRow1Based,
       duplicateRows1Based,
@@ -1137,7 +1212,8 @@ export class SheetsService {
     const salesLogMatchCount = countSalesLogRowsForSeller(
       salesValues,
       sellerCode,
-      this.salesLogCashedColumnName
+      this.salesLogCashedColumnName,
+      bCashE > 0 ? this.dolphinCategoryLabel : undefined
     );
 
     const sqP = await this.countSquareRowsForSeller(
@@ -1156,8 +1232,10 @@ export class SheetsService {
     return {
       lCashE,
       mCashE,
+      bCashE,
       currentOutstandingL,
       currentOutstandingM,
+      currentOutstandingB,
       currentOutstanding,
       outstandingPrimaryRow1Based: primaryRow1Based,
       outstandingDuplicateRows1Based: duplicateRows1Based,
@@ -1196,6 +1274,7 @@ export class SheetsService {
     splitOutstanding: {
       outstandingL: number;
       outstandingM: number;
+      outstandingB: number;
       totalOutstanding: number;
     },
     primaryRow1Based: number | null,
@@ -1220,14 +1299,15 @@ export class SheetsService {
 
     const cellL = String(splitOutstanding.outstandingL);
     const cellM = String(splitOutstanding.outstandingM);
+    const cellB = String(splitOutstanding.outstandingB);
     if (primaryRow1Based != null) {
       const colB = `${rangePrefix}B${primaryRow1Based}`;
-      const colC = `${rangePrefix}C${primaryRow1Based}`;
+      const colD = `${rangePrefix}D${primaryRow1Based}`;
       await client.spreadsheets.values.update({
         spreadsheetId,
-        range: `${colB}:${colC}`,
+        range: `${colB}:${colD}`,
         valueInputOption: "USER_ENTERED",
-        requestBody: { values: [[cellL, cellM]] },
+        requestBody: { values: [[cellL, cellM, cellB]] },
       });
       if (duplicateRows1Based.length > 0) {
         await this.deleteSheetRowsBy1BasedIndices(
@@ -1240,20 +1320,21 @@ export class SheetsService {
       return;
     }
 
-    const appendRange = `${rangePrefix}A:C`;
+    const appendRange = `${rangePrefix}A:D`;
     await client.spreadsheets.values.append({
       spreadsheetId,
       range: appendRange,
       valueInputOption: "USER_ENTERED",
       insertDataOption: "INSERT_ROWS",
-      requestBody: { values: [[sellerCode, cellL, cellM]] },
+      requestBody: { values: [[sellerCode, cellL, cellM, cellB]] },
     });
   }
 
   private async markSalesLogCashedForSeller(
     client: sheets_v4.Sheets,
     spreadsheetId: string,
-    sellerCode: string
+    sellerCode: string,
+    categoryFilter?: string
   ): Promise<number> {
     const response = await client.spreadsheets.values.get({
       spreadsheetId,
@@ -1270,6 +1351,9 @@ export class SheetsService {
     const cashedIdx = header.findIndex(
       (h) => normSheetHeader(h) === normSheetHeader(this.salesLogCashedColumnName)
     );
+    const categoryIdx = header.findIndex(
+      (h) => normSheetHeader(h) === "category_(company)"
+    );
     if (sellerIdx < 0) {
       throw new Error("Sales_Log must include a seller_code column.");
     }
@@ -1278,12 +1362,22 @@ export class SheetsService {
         `Sales_Log must include column "${this.salesLogCashedColumnName}".`
       );
     }
+    if (categoryFilter != null && categoryIdx < 0) {
+      throw new Error('Sales_Log must include column "Category (Company)".');
+    }
 
     const updates: sheets_v4.Schema$ValueRange[] = [];
+    const categoryFilterNorm = normalizeCompanyCategory(categoryFilter);
     for (let i = 1; i < values.length; i++) {
       const row = values[i] ?? [];
       const rowSeller = normalizeCashInSellerDigits(String(row[sellerIdx] ?? ""));
       if (rowSeller !== sellerCode) continue;
+      if (
+        categoryFilterNorm !== "" &&
+        normalizeCompanyCategory(row[categoryIdx]) !== categoryFilterNorm
+      ) {
+        continue;
+      }
       const rowNumber = i + 1;
       const col = toA1Column(cashedIdx + 1);
       updates.push({
@@ -1692,6 +1786,7 @@ function parseOutstandingForSeller(
 ): {
   currentOutstandingL: number;
   currentOutstandingM: number;
+  currentOutstandingB: number;
   currentOutstanding: number;
   primaryRow1Based: number | null;
   duplicateRows1Based: number[];
@@ -1700,6 +1795,7 @@ function parseOutstandingForSeller(
     return {
       currentOutstandingL: 0,
       currentOutstandingM: 0,
+      currentOutstandingB: 0,
       currentOutstanding: 0,
       primaryRow1Based: null,
       duplicateRows1Based: [],
@@ -1715,6 +1811,9 @@ function parseOutstandingForSeller(
   const idxOutM = headerRow.findIndex(
     (c) => normSheetHeader(String(c ?? "")) === "outstanding_m"
   );
+  const idxOutB = headerRow.findIndex(
+    (c) => normSheetHeader(String(c ?? "")) === "outstanding_b"
+  );
   const idxLegacyOut = headerRow.findIndex(
     (c) => normSheetHeader(String(c ?? "")) === "outstanding"
   );
@@ -1727,6 +1826,7 @@ function parseOutstandingForSeller(
 
   let sumL = 0;
   let sumM = 0;
+  let sumB = 0;
   let primaryRow1Based: number | null = null;
   const duplicateRows1Based: number[] = [];
   for (let i = 1; i < values.length; i++) {
@@ -1737,8 +1837,10 @@ function parseOutstandingForSeller(
     const outstandingM = hasSplit
       ? parseSheetMoneyNumber(row[idxOutM])
       : parseSheetMoneyNumber(row[idxLegacyOut]);
+    const outstandingB = idxOutB >= 0 ? parseSheetMoneyNumber(row[idxOutB]) : 0;
     sumL += outstandingL;
     sumM += outstandingM;
+    sumB += outstandingB;
     const row1Based = i + 1;
     if (primaryRow1Based == null) {
       primaryRow1Based = row1Based;
@@ -1750,7 +1852,8 @@ function parseOutstandingForSeller(
   return {
     currentOutstandingL: sumL,
     currentOutstandingM: sumM,
-    currentOutstanding: sumL + sumM,
+    currentOutstandingB: sumB,
+    currentOutstanding: sumL + sumM + sumB,
     primaryRow1Based,
     duplicateRows1Based,
   };
@@ -1768,6 +1871,9 @@ function parseAllOutstandingRows(values: unknown[][]): SellerOutstandingRow[] {
   const idxOutM = headerRow.findIndex(
     (c) => normSheetHeader(String(c ?? "")) === "outstanding_m"
   );
+  const idxOutB = headerRow.findIndex(
+    (c) => normSheetHeader(String(c ?? "")) === "outstanding_b"
+  );
   const idxLegacyOut = headerRow.findIndex(
     (c) => normSheetHeader(String(c ?? "")) === "outstanding"
   );
@@ -1777,7 +1883,10 @@ function parseAllOutstandingRows(values: unknown[][]): SellerOutstandingRow[] {
       'Outstanding tab row 1 must include headers "Seller_Code", "Outstanding L", and "Outstanding M".'
     );
   }
-  const aggregates = new Map<string, { outstandingL: number; outstandingM: number }>();
+  const aggregates = new Map<
+    string,
+    { outstandingL: number; outstandingM: number; outstandingB: number }
+  >();
   const order: string[] = [];
   for (let i = 1; i < values.length; i++) {
     const row = values[i] ?? [];
@@ -1787,47 +1896,86 @@ function parseAllOutstandingRows(values: unknown[][]): SellerOutstandingRow[] {
     const outstandingM = hasSplit
       ? parseSheetMoneyNumber(row[idxOutM])
       : parseSheetMoneyNumber(row[idxLegacyOut]);
+    const outstandingB = idxOutB >= 0 ? parseSheetMoneyNumber(row[idxOutB]) : 0;
     const existing = aggregates.get(sellerCode);
     if (existing == null) {
-      aggregates.set(sellerCode, { outstandingL, outstandingM });
+      aggregates.set(sellerCode, { outstandingL, outstandingM, outstandingB });
       order.push(sellerCode);
     } else {
       existing.outstandingL += outstandingL;
       existing.outstandingM += outstandingM;
+      existing.outstandingB += outstandingB;
     }
   }
 
   return order.map((sellerCode) => {
-    const totals = aggregates.get(sellerCode) ?? { outstandingL: 0, outstandingM: 0 };
+    const totals = aggregates.get(sellerCode) ?? {
+      outstandingL: 0,
+      outstandingM: 0,
+      outstandingB: 0,
+    };
     return {
       sellerCode,
       outstandingL: totals.outstandingL,
       outstandingM: totals.outstandingM,
-      outstanding: totals.outstandingL + totals.outstandingM,
+      outstandingB: totals.outstandingB,
+      outstanding: totals.outstandingL + totals.outstandingM + totals.outstandingB,
     };
   });
 }
 
 function splitOutstandingByPriority(
   totalOutstanding: number,
-  mCashIn: number
-): { outstandingL: number; outstandingM: number; totalOutstanding: number } {
+  mCashIn: number,
+  lCashIn: number,
+  bCashIn: number
+): {
+  outstandingL: number;
+  outstandingM: number;
+  outstandingB: number;
+  totalOutstanding: number;
+} {
   if (!Number.isFinite(totalOutstanding)) {
-    return { outstandingL: 0, outstandingM: 0, totalOutstanding: 0 };
+    return { outstandingL: 0, outstandingM: 0, outstandingB: 0, totalOutstanding: 0 };
   }
   if (Math.abs(totalOutstanding) < OUTSTANDING_ZERO_EPS) {
-    return { outstandingL: 0, outstandingM: 0, totalOutstanding: 0 };
+    return { outstandingL: 0, outstandingM: 0, outstandingB: 0, totalOutstanding: 0 };
   }
 
-  // Keep as much outstanding as possible on M first, capped by M cash-in for positive totals.
   if (totalOutstanding > 0) {
+    // Preserve legacy behavior when B is not in play.
+    if (Math.abs(bCashIn) < OUTSTANDING_ZERO_EPS) {
+      const cappedM = Math.min(totalOutstanding, Math.max(0, mCashIn));
+      const outstandingL = totalOutstanding - cappedM;
+      return { outstandingL, outstandingM: cappedM, outstandingB: 0, totalOutstanding };
+    }
+
     const cappedM = Math.min(totalOutstanding, Math.max(0, mCashIn));
-    const outstandingL = totalOutstanding - cappedM;
-    return { outstandingL, outstandingM: cappedM, totalOutstanding };
+    const afterM = totalOutstanding - cappedM;
+    const cappedL = Math.min(afterM, Math.max(0, lCashIn));
+    const outstandingB = afterM - cappedL;
+    return {
+      outstandingL: cappedL,
+      outstandingM: cappedM,
+      outstandingB,
+      totalOutstanding,
+    };
   }
 
-  // Negative outstanding means seller is owed; keep it on M first.
-  return { outstandingL: 0, outstandingM: totalOutstanding, totalOutstanding };
+  // Negative outstanding means seller is owed; keep it on M first then L, then B.
+  const remainingAbs = Math.abs(totalOutstanding);
+  const mCap = Math.max(0, mCashIn);
+  const lCap = Math.max(0, lCashIn);
+  const mShare = Math.min(remainingAbs, mCap);
+  const afterM = remainingAbs - mShare;
+  const lShare = Math.min(afterM, lCap);
+  const afterL = afterM - lShare;
+  return {
+    outstandingL: -lShare,
+    outstandingM: -mShare,
+    outstandingB: -afterL,
+    totalOutstanding,
+  };
 }
 
 function parseSellerEmailRows(values: unknown[][]): SellerEmailRow[] {
@@ -2002,7 +2150,8 @@ function isCancelledOrderStatus(status: string): boolean {
 function countSalesLogRowsForSeller(
   values: unknown[][],
   sellerCode: string,
-  cashedColumnHeader: string
+  cashedColumnHeader: string,
+  categoryFilter?: string
 ): number {
   if (values.length < 2) return 0;
   const header = values[0]?.map((v) => String(v).trim()) ?? [];
@@ -2012,15 +2161,30 @@ function countSalesLogRowsForSeller(
   const cashedIdx = header.findIndex(
     (h) => normSheetHeader(h) === normSheetHeader(cashedColumnHeader)
   );
+  const categoryIdx = header.findIndex(
+    (h) => normSheetHeader(h) === "category_(company)"
+  );
   if (sellerIdx < 0 || cashedIdx < 0) return 0;
+  if (categoryFilter != null && categoryIdx < 0) return 0;
+  const categoryFilterNorm = normalizeCompanyCategory(categoryFilter);
   let n = 0;
   for (let i = 1; i < values.length; i++) {
     const row = values[i] ?? [];
     const rowSeller = normalizeCashInSellerDigits(String(row[sellerIdx] ?? ""));
     if (rowSeller !== sellerCode) continue;
+    if (
+      categoryFilterNorm !== "" &&
+      normalizeCompanyCategory(row[categoryIdx]) !== categoryFilterNorm
+    ) {
+      continue;
+    }
     n += 1;
   }
   return n;
+}
+
+function normalizeCompanyCategory(value: unknown): string {
+  return String(value ?? "").trim().toLowerCase();
 }
 
 function squareRowSellerMatches(cell: unknown, sellerCodeNorm: string): boolean {

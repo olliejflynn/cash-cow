@@ -280,13 +280,19 @@ export class TelegramWebhookController {
 
     const outstandingBySeller = new Map<
       string,
-      { outstandingL: number; outstandingM: number; outstanding: number }
+      {
+        outstandingL: number;
+        outstandingM: number;
+        outstandingB: number;
+        outstanding: number;
+      }
     >(
       outstandingRows.map((r) => [
         r.sellerCode,
         {
           outstandingL: r.outstandingL,
           outstandingM: r.outstandingM,
+          outstandingB: r.outstandingB,
           outstanding: r.outstanding,
         },
       ])
@@ -310,6 +316,7 @@ export class TelegramWebhookController {
       const outstanding = outstandingBySeller.get(sellerCode) ?? {
         outstandingL: 0,
         outstandingM: 0,
+        outstandingB: 0,
         outstanding: 0,
       };
       if (row == null && outstanding.outstanding === 0) {
@@ -335,6 +342,14 @@ export class TelegramWebhookController {
         sumE: 0,
         cashIn: 0,
       };
+      const bBreakdown: CashInTabAggregate = row?.b ?? {
+        sumCollected: 0,
+        sumC: 0,
+        sumCommission: 0,
+        sumD: 0,
+        sumE: 0,
+        cashIn: 0,
+      };
       await telegramSendMessage(token, {
         chat_id: chatId,
         text: formatSingleSellerBalanceHtml({
@@ -342,8 +357,10 @@ export class TelegramWebhookController {
           email: emailBySeller.get(sellerCode) ?? "",
           l: lBreakdown,
           m: mBreakdown,
+          b: bBreakdown,
           outstandingL: outstanding.outstandingL,
           outstandingM: outstanding.outstandingM,
+          outstandingB: outstanding.outstandingB,
         }),
         parse_mode: "HTML",
       });
@@ -432,7 +449,7 @@ function parseCashCommand(text: string): CashParseResult | null {
       ok: false,
       error:
         "Usage: /cash <seller_code> [<amount>]\n" +
-        "Omit amount to use L+M CASH IN totals from the sheet.",
+        "Omit amount to use L+M+B CASH IN totals from the sheet.",
     };
   }
   const sellerRaw = (parts[1] ?? "").trim();
@@ -523,18 +540,21 @@ function encodeAmountForCallbackToken(amount: number): string {
 
 function formatCashPreview(p: SellerCashInPreview): string {
   const amtNote = p.amountWasAuto
-    ? "Hand-in amount (auto, L CASH IN + M CASH IN)"
+    ? "Hand-in amount (auto, L CASH IN + M CASH IN + B CASH IN)"
     : "Hand-in amount (you entered)";
   return (
     `Cash-in preview — seller ${p.sellerCode}\n\n` +
     `L (CASH IN): ${formatMoney(p.lCashE)}\n` +
     `M (CASH IN): ${formatMoney(p.mCashE)}\n` +
+    `B (CASH IN): ${formatMoney(p.bCashE)}\n` +
     `${amtNote}: ${formatMoney(p.amountUsed)}\n` +
     `Current outstanding L: ${formatMoney(p.currentOutstandingL)}\n` +
     `Current outstanding M: ${formatMoney(p.currentOutstandingM)}\n` +
+    `Current outstanding B: ${formatMoney(p.currentOutstandingB)}\n` +
     `Current outstanding total: ${formatMoney(p.currentOutstanding)}\n` +
     `New outstanding L: ${formatMoney(p.newOutstandingL)}\n` +
     `New outstanding M: ${formatMoney(p.newOutstandingM)}\n` +
+    `New outstanding B: ${formatMoney(p.newOutstandingB)}\n` +
     `New outstanding total: ${formatMoney(p.newOutstanding)}\n\n` +
     `Sales_Log rows to mark cashed: ${p.salesLogRowsToUpdate}\n` +
     `Square_payments rows to delete: ${p.squareRowsPrimary}\n` +
@@ -548,7 +568,9 @@ function formatCashApplySuccess(r: SellerCashInApplyResult): string {
     ? "Outstanding row removed (balance cleared)."
     : `New outstanding — L: ${formatMoney(r.newOutstandingL)}, M: ${formatMoney(
         r.newOutstandingM
-      )}, Total: ${formatMoney(r.newOutstanding)}.`;
+      )}, B: ${formatMoney(r.newOutstandingB)}, Total: ${formatMoney(
+        r.newOutstanding
+      )}.`;
   return (
     `Cash-in complete — seller ${r.sellerCode}\n\n` +
     `Amount applied: ${formatMoney(r.amountUsed)}\n` +
@@ -616,11 +638,15 @@ function formatSingleSellerBalanceHtml(input: {
   email: string;
   l: CashInTabAggregate;
   m: CashInTabAggregate;
+  b: CashInTabAggregate;
   outstandingL: number;
   outstandingM: number;
+  outstandingB: number;
 }): string {
-  const { sellerCode, email, l, m, outstandingL, outstandingM } = input;
-  const grandTotal = m.sumE + l.sumE + outstandingL + outstandingM;
+  const { sellerCode, email, l, m, b, outstandingL, outstandingM, outstandingB } =
+    input;
+  const grandTotal =
+    b.sumE + m.sumE + l.sumE + outstandingL + outstandingM + outstandingB;
   const lines = [
     "CASH IN",
     "",
@@ -642,6 +668,14 @@ function formatSingleSellerBalanceHtml(input: {
     `Cash In:   ${formatMoney(l.sumE)}`,
     `Out L:     ${formatMoney(outstandingL)}`,
     "",
+    "B SHEET",
+    `Collected: ${formatMoney(b.sumCollected)}`,
+    `Hand In:   ${formatMoney(b.sumC)}`,
+    `Commission: ${formatMoney(b.sumCommission)}`,
+    `Card:      ${formatMoney(b.sumD)}`,
+    `Cash In:   ${formatMoney(b.sumE)}`,
+    `Out B:     ${formatMoney(outstandingB)}`,
+    "",
     `TOTAL: ${formatMoney(grandTotal)}`,
   ];
 
@@ -652,24 +686,31 @@ function formatAllBalancesHtml(
   rows: SellerCashInRow[],
   outstandingBySeller: Map<
     string,
-    { outstandingL: number; outstandingM: number; outstanding: number }
+    {
+      outstandingL: number;
+      outstandingM: number;
+      outstandingB: number;
+      outstanding: number;
+    }
   >,
   emailBySeller: Map<string, string>
 ): string {
   const bySeller = new Map<
     string,
-    { l: number; m: number; outstanding: number; total: number }
+    { l: number; m: number; b: number; outstanding: number; total: number }
   >();
   for (const row of rows) {
     const code = normalizeSellerCode(row.sellerId);
     if (code === "") continue;
     const l = row.l.sumE;
     const m = row.m.sumE;
+    const b = row.b.sumE;
     const outstanding = outstandingBySeller.get(code)?.outstanding ?? 0;
-    const total = l + m + outstanding;
+    const total = l + m + b + outstanding;
     bySeller.set(code, {
       l,
       m,
+      b,
       total,
       outstanding,
     });
@@ -679,6 +720,7 @@ function formatAllBalancesHtml(
     bySeller.set(code, {
       l: 0,
       m: 0,
+      b: 0,
       total: outstanding.outstanding,
       outstanding: outstanding.outstanding,
     });
@@ -691,6 +733,7 @@ function formatAllBalancesHtml(
       email: emailBySeller.get(code) ?? "",
       l: v.l,
       m: v.m,
+      b: v.b,
       total: v.total,
       outstanding: v.outstanding,
     }))
@@ -704,6 +747,7 @@ function formatAllBalancesHtml(
     items.map((item) => ({
       l: item.l,
       m: item.m,
+      b: item.b,
       outstanding: item.outstanding,
       total: item.total,
     }))
@@ -715,6 +759,7 @@ function formatAllBalancesHtml(
       title,
       l: item.l,
       m: item.m,
+      b: item.b,
       outstanding: item.outstanding,
       total: item.total,
       widths,
@@ -736,11 +781,13 @@ function formatSellerCashSectionHtml(input: {
   title: string;
   l: number;
   m: number;
+  b: number;
   outstanding: number;
   total: number;
   widths: {
     l: number;
     m: number;
+    b: number;
     outstanding: number;
     total: number;
   };
@@ -748,11 +795,13 @@ function formatSellerCashSectionHtml(input: {
   const header =
     `${"L".padStart(input.widths.l, " ")} | ` +
     `${"M".padStart(input.widths.m, " ")} | ` +
+    `${"B".padStart(input.widths.b, " ")} | ` +
     `${"OUT".padStart(input.widths.outstanding, " ")} | ` +
     `${"TOTAL".padStart(input.widths.total, " ")}`;
   const values =
     `${formatMoney(input.l).padStart(input.widths.l, " ")} | ` +
     `${formatMoney(input.m).padStart(input.widths.m, " ")} | ` +
+    `${formatMoney(input.b).padStart(input.widths.b, " ")} | ` +
     `${formatMoney(input.outstanding).padStart(
       input.widths.outstanding,
       " "
@@ -766,11 +815,12 @@ function formatSellerCashSectionHtml(input: {
 }
 
 function computeBalanceGridWidths(
-  rows: Array<{ l: number; m: number; outstanding: number; total: number }>
-): { l: number; m: number; outstanding: number; total: number } {
+  rows: Array<{ l: number; m: number; b: number; outstanding: number; total: number }>
+): { l: number; m: number; b: number; outstanding: number; total: number } {
   return {
     l: Math.max("L".length, ...rows.map((row) => formatMoney(row.l).length)),
     m: Math.max("M".length, ...rows.map((row) => formatMoney(row.m).length)),
+    b: Math.max("B".length, ...rows.map((row) => formatMoney(row.b).length)),
     outstanding: Math.max(
       "OUT".length,
       ...rows.map((row) => formatMoney(row.outstanding).length)
@@ -799,13 +849,19 @@ function formatBreakdownMessages(breakdown: SellerBreakdownResult): string[] {
     `Commission total: ${formatMoneyCompact(breakdown.totalCommission)}`,
     `Hand-in (L): ${formatMoneyCompact(breakdown.handInSheetL)}`,
     `Hand-in (M): ${formatMoneyCompact(breakdown.handInSheetM)}`,
+    `Hand-in (B): ${formatMoneyCompact(breakdown.handInSheetB)}`,
     `Hand-in total: ${formatMoneyCompact(breakdown.handInSheetTotal)}`,
     `Card (L): ${formatMoneyCompact(breakdown.cardTotalPrimary)}`,
     `Card (M): ${formatMoneyCompact(breakdown.cardTotalM)}`,
+    "Card (B): 0",
     `Card total (combined): ${formatMoneyCompact(breakdown.cardTotalCombined)}`,
-    `Sheet cash in (L+M): ${formatMoneyCompact(breakdown.cashInSheetTotal)}`,
+    `Sheet cash in (L): ${formatMoneyCompact(breakdown.cashInSheetL)}`,
+    `Sheet cash in (M): ${formatMoneyCompact(breakdown.cashInSheetM)}`,
+    `Sheet cash in (B): ${formatMoneyCompact(breakdown.cashInSheetB)}`,
+    `Sheet cash in (L+M+B): ${formatMoneyCompact(breakdown.cashInSheetTotal)}`,
     `Outstanding (L): ${formatMoneyCompact(breakdown.outstandingL)}`,
     `Outstanding (M): ${formatMoneyCompact(breakdown.outstandingM)}`,
+    `Outstanding (B): ${formatMoneyCompact(breakdown.outstandingB)}`,
     `Outstanding (total): ${formatMoneyCompact(breakdown.outstandingTotal)}`,
     `CASH IN: ${formatMoneyCompact(breakdown.cashInIncludingOutstanding)}`,
   ];
@@ -877,7 +933,9 @@ function formatBreakdownSaleEntry(
   const row = `${qty} ${name} : ${gross} | ${commission} | ${handIn}`;
   const rowText = sale.isCancelled ? strikeThroughText(row) : row;
   const orderNumber = String(sale.orderId ?? "").trim() || "-";
-  return `<b>${escapeHtml(orderNumber)}</b> ${escapeHtml(rowText)}`;
+  const category = String(sale.categoryCompany ?? "").trim();
+  const categorySuffix = category === "" ? "" : ` [${category}]`;
+  return `<b>${escapeHtml(orderNumber)}</b> ${escapeHtml(`${rowText}${categorySuffix}`)}`;
 }
 
 function computeBreakdownSaleWidths(sales: SellerUncashedSaleBreakdownRow[]): {
