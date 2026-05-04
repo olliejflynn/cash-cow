@@ -853,16 +853,12 @@ function formatBreakdownMessages(breakdown: SellerBreakdownResult): string[] {
     `Hand-in total: ${formatMoneyCompact(breakdown.handInSheetTotal)}`,
     `Card (L): ${formatMoneyCompact(breakdown.cardTotalPrimary)}`,
     `Card (M): ${formatMoneyCompact(breakdown.cardTotalM)}`,
-    "Card (B): 0",
     `Card total (combined): ${formatMoneyCompact(breakdown.cardTotalCombined)}`,
-    `Sheet cash in (L): ${formatMoneyCompact(breakdown.cashInSheetL)}`,
-    `Sheet cash in (M): ${formatMoneyCompact(breakdown.cashInSheetM)}`,
-    `Sheet cash in (B): ${formatMoneyCompact(breakdown.cashInSheetB)}`,
-    `Sheet cash in (L+M+B): ${formatMoneyCompact(breakdown.cashInSheetTotal)}`,
-    `Outstanding (L): ${formatMoneyCompact(breakdown.outstandingL)}`,
-    `Outstanding (M): ${formatMoneyCompact(breakdown.outstandingM)}`,
-    `Outstanding (B): ${formatMoneyCompact(breakdown.outstandingB)}`,
-    `Outstanding (total): ${formatMoneyCompact(breakdown.outstandingTotal)}`,
+    `Outstanding (L/M/B): ${formatMoneyCompact(
+      breakdown.outstandingL
+    )} + ${formatMoneyCompact(breakdown.outstandingM)} + ${formatMoneyCompact(
+      breakdown.outstandingB
+    )} = ${formatMoneyCompact(breakdown.outstandingTotal)}`,
     `CASH IN: ${formatMoneyCompact(breakdown.cashInIncludingOutstanding)}`,
   ];
   const summary = headerLines.join("\n");
@@ -930,12 +926,12 @@ function formatBreakdownSaleEntry(
     widths.handIn,
     " "
   );
-  const row = `${qty} ${name} : ${gross} | ${commission} | ${handIn}`;
-  const rowText = sale.isCancelled ? strikeThroughText(row) : row;
   const orderNumber = String(sale.orderId ?? "").trim() || "-";
-  const category = String(sale.categoryCompany ?? "").trim();
-  const categorySuffix = category === "" ? "" : ` [${category}]`;
-  return `<b>${escapeHtml(orderNumber)}</b> ${escapeHtml(`${rowText}${categorySuffix}`)}`;
+  if (sale.isCancelled) {
+    return `<b>${escapeHtml(orderNumber)}</b> CANCELED`;
+  }
+  const row = `${qty} ${name} : ${gross} | ${commission} | ${handIn}`;
+  return `<b>${escapeHtml(orderNumber)}</b> ${escapeHtml(row)}`;
 }
 
 function computeBreakdownSaleWidths(sales: SellerUncashedSaleBreakdownRow[]): {
