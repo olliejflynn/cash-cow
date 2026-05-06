@@ -129,6 +129,8 @@ export type SellerUncashedSaleBreakdownRow = {
   grossCommission: number;
   handInAmount: number;
   categoryCompany: string;
+  /** Sales_Log Location column (e.g. WooCommerce `loc`). */
+  location: string;
   isCancelled: boolean;
 };
 
@@ -2173,6 +2175,9 @@ function parseUncashedSalesRowsForSeller(
   const categoryIdx = header.findIndex(
     (h) => normSheetHeader(h) === "category_(company)"
   );
+  const locationIdx = header.findIndex(
+    (h) => normSheetHeader(h) === "location"
+  );
 
   if (sellerIdx < 0 || cashedIdx < 0) {
     throw new Error(
@@ -2220,6 +2225,12 @@ function parseUncashedSalesRowsForSeller(
       ),
       handInAmount: parseSheetMoneyNumber(handInIdx >= 0 ? row[handInIdx] : 0),
       categoryCompany: String(categoryIdx >= 0 ? row[categoryIdx] ?? "" : "").trim(),
+      location: (() => {
+        const raw = String(
+          locationIdx >= 0 ? row[locationIdx] ?? "" : ""
+        ).trim();
+        return raw === "" ? "N/A" : raw;
+      })(),
       isCancelled: isCancelledOrderStatus(orderStatus),
     });
   }

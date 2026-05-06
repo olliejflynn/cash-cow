@@ -865,7 +865,7 @@ function formatBreakdownMessages(breakdown: SellerBreakdownResult): string[] {
     return [
       `${escapeHtml(
         summary
-      )}\n\nAll Sales 📋 (PRICE | COMMISSION | HAND-IN)\n<pre>${escapeHtml(
+      )}\n\nAll Sales 📋 (PRICE | COMMISSION | HAND-IN | LOC)\n<pre>${escapeHtml(
         "No uncashed sales found for this seller."
       )}</pre>`,
     ];
@@ -904,6 +904,7 @@ function formatBreakdownSaleEntry(
     gross: number;
     commission: number;
     handIn: number;
+    location: number;
   }
 ): string {
   const ticketDisplay =
@@ -924,13 +925,15 @@ function formatBreakdownSaleEntry(
     widths.handIn,
     " "
   );
+  const locRaw = sale.location.trim() === "" ? "N/A" : sale.location.trim();
+  const loc = locRaw.padEnd(widths.location, " ");
   const orderNumber = String(sale.orderId ?? "").trim() || "-";
   if (sale.isCancelled) {
     return `<b>${escapeHtml(orderNumber)}</b> ${escapeHtml(
-      `${qty} ${name} : CANCELED`
+      `${qty} ${name} : CANCELED | ${loc.trimEnd()}`
     )}`;
   }
-  const row = `${qty} ${name} : ${gross} | ${commission} | ${handIn}`;
+  const row = `${qty} ${name} : ${gross} | ${commission} | ${handIn} | ${loc}`;
   return `<b>${escapeHtml(orderNumber)}</b> ${escapeHtml(row)}`;
 }
 
@@ -940,7 +943,12 @@ function computeBreakdownSaleWidths(sales: SellerUncashedSaleBreakdownRow[]): {
   gross: number;
   commission: number;
   handIn: number;
+  location: number;
 } {
+  const locationLabel = (sale: SellerUncashedSaleBreakdownRow): string => {
+    const s = sale.location.trim();
+    return s === "" ? "N/A" : s;
+  };
   return {
     qty: Math.max(
       2,
@@ -967,6 +975,10 @@ function computeBreakdownSaleWidths(sales: SellerUncashedSaleBreakdownRow[]): {
     handIn: Math.max(
       1,
       ...sales.map((sale) => formatMoneyCompact(sale.handInAmount).length)
+    ),
+    location: Math.max(
+      3,
+      ...sales.map((sale) => locationLabel(sale).length)
     ),
   };
 }
