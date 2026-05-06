@@ -1313,11 +1313,11 @@ export class SheetsService {
     const cellM = String(splitOutstanding.outstandingM);
     const cellB = String(splitOutstanding.outstandingB);
     if (primaryRow1Based != null) {
-      const colB = `${rangePrefix}B${primaryRow1Based}`;
-      const colD = `${rangePrefix}D${primaryRow1Based}`;
+      // One sheet qualifier only: Outstanding!B4:D4 — not Outstanding!B4:Outstanding!D4 (invalid).
+      const rowRange = `${rangePrefix}B${primaryRow1Based}:D${primaryRow1Based}`;
       await client.spreadsheets.values.update({
         spreadsheetId,
-        range: `${colB}:${colD}`,
+        range: rowRange,
         valueInputOption: "USER_ENTERED",
         requestBody: { values: [[cellL, cellM, cellB]] },
       });
