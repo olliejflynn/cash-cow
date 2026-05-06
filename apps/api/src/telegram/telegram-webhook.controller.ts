@@ -542,13 +542,22 @@ function formatCashPreview(p: SellerCashInPreview): string {
   const amtNote = p.amountWasAuto
     ? "Hand-in amount (auto, L CASH IN + M CASH IN + B CASH IN)"
     : "Hand-in amount (you entered)";
+  const before =
+    p.currentOutstanding === 0
+      ? "Current Outstanding tab: (none)"
+      : `Current Outstanding tab: L ${formatMoney(p.currentOutstandingL)} | M ${formatMoney(p.currentOutstandingM)} | B ${formatMoney(p.currentOutstandingB)} (total ${formatMoney(p.currentOutstanding)})`;
+  const after =
+    p.newOutstanding === 0
+      ? "After confirm: Outstanding row removed (fully settled)."
+      : `After confirm: Outstanding tab → L ${formatMoney(p.newOutstandingL)} | M ${formatMoney(p.newOutstandingM)} | B ${formatMoney(p.newOutstandingB)} (total ${formatMoney(p.newOutstanding)})`;
   return (
     `Cash-in preview — seller ${p.sellerCode}\n\n` +
     `L (CASH IN): ${formatMoney(p.lCashE)}\n` +
     `M (CASH IN): ${formatMoney(p.mCashE)}\n` +
     `B (CASH IN): ${formatMoney(p.bCashE)}\n` +
     `${amtNote}: ${formatMoney(p.amountUsed)}\n` +
-    `Outstanding sheet: not updated here (maintain manually).\n\n` +
+    `${before}\n` +
+    `${after}\n\n` +
     `Sales_Log rows to mark cashed: ${p.salesLogRowsToUpdate}\n` +
     `Square_payments rows to delete: ${p.squareRowsPrimary}\n` +
     `M Square_payments rows to delete: ${p.squareRowsM}\n\n` +
@@ -557,10 +566,13 @@ function formatCashPreview(p: SellerCashInPreview): string {
 }
 
 function formatCashApplySuccess(r: SellerCashInApplyResult): string {
+  const outLine = r.outstandingRowDeleted
+    ? "Outstanding tab: row removed (fully settled)."
+    : `Outstanding tab: L ${formatMoney(r.newOutstandingL)} | M ${formatMoney(r.newOutstandingM)} | B ${formatMoney(r.newOutstandingB)} (total ${formatMoney(r.newOutstanding)})`;
   return (
     `Cash-in complete — seller ${r.sellerCode}\n\n` +
     `Amount applied: ${formatMoney(r.amountUsed)}\n` +
-    `Outstanding sheet: not updated — maintain manually.\n` +
+    `${outLine}\n` +
     `Sales_Log rows marked cashed: ${r.salesLogRowsUpdated}\n` +
     `Square_payments deleted: ${r.squareRowsDeletedPrimary}\n` +
     `M Square_payments deleted: ${r.squareRowsDeletedM}`

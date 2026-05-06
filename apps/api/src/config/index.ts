@@ -27,7 +27,7 @@ export const config = () => ({
   /** Telegram /cash: B (Dolphin) cash-in tab (same columns as L/M). */
   bCashInSheetName: (process.env.B_CASH_IN_SHEET_NAME ?? "B CASH IN 🐬").trim(),
   /**
-   * Outstanding tab: read-only for Telegram /balance and /breakdown (/cash does not write it).
+   * Outstanding tab (Seller_Code, Outstanding L/M/B): read for /balance /breakdown; /cash updates or clears rows.
    */
   outstandingSheetName: (process.env.OUTSTANDING_SHEET_NAME ?? "Outstanding").trim(),
   /** Sales_Log checkbox column header (must match sheet). */
