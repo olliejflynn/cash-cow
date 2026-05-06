@@ -235,28 +235,20 @@ export class SheetsService {
   }
 
   /**
-   * Load Ticket_type_Slug → Commission from the Ticket_rules tab (header row skipped).
+   * Load Ticket_rules: base commission per slug and optional H-location overrides (H Commission column).
    * First data row wins for duplicate slugs.
    */
-  async getTicketCommissionBySlug(): Promise<ReadonlyMap<string, number>> {
+  async getTicketCommissionMaps(): Promise<{
+    commissionBySlug: ReadonlyMap<string, number>;
+    hCommissionBySlug: ReadonlyMap<string, number>;
+  }> {
     const client = await this.getSheetsClient();
     const response = await client.spreadsheets.values.get({
       spreadsheetId: this.spreadsheetId,
-      range: `${this.ticketRulesSheetName}!A:B`,
+      range: `${this.ticketRulesSheetName}!A:Z`,
     });
     const rows = response.data.values ?? [];
-    const map = new Map<string, number>();
-    for (let i = 1; i < rows.length; i++) {
-      const row = rows[i] ?? [];
-      const slug = String(row[0] ?? "").trim();
-      if (slug === "") continue;
-      if (map.has(slug)) continue;
-      const raw = row[1];
-      const n = parseFloat(String(raw ?? "").replace(/,/g, ""));
-      const commission = Number.isFinite(n) ? n : 0;
-      map.set(slug, commission);
-    }
-    return map;
+    return parseTicketCommissionMaps(rows);
   }
 
   async getSellerBreakdownFromSheets(
@@ -2032,9 +2024,63 @@ function normTicketRulesHeader(cell: unknown): string {
   );
 }
 
+function parseTicketCommissionMaps(values: unknown[][]): {
+  commissionBySlug: Map<string, number>;
+  hCommissionBySlug: Map<string, number>;
+} {
+  const commissionBySlug = new Map<string, number>();
+  const hCommissionBySlug = new Map<string, number>();
+  if (values.length === 0) {
+    return { commissionBySlug, hCommissionBySlug };
+  }
+
+  const headerRaw = values[0] ?? [];
+  const header = [...headerRaw].map((_c, idx) =>
+    normTicketRulesHeader(headerRaw[idx])
+  );
+  const slugIdx = header.findIndex(
+    (h) => h === "ticket_type_slug" || h === "slug"
+  );
+  const commissionIdx = header.findIndex((h) => h === "commission");
+  const hCommissionIdx = header.findIndex((h) => h === "h_commission");
+
+  /** Default: slug | commission | display | deposit | h_commission */
+  const idxSlug = slugIdx >= 0 ? slugIdx : 0;
+  const idxCommission = commissionIdx >= 0 ? commissionIdx : 1;
+  const idxH = hCommissionIdx >= 0 ? hCommissionIdx : 4;
+
+  const parseMoneyCell = (raw: unknown): number => {
+    const n = parseFloat(String(raw ?? "").replace(/,/g, ""));
+    return Number.isFinite(n) ? n : 0;
+  };
+
+  /** Override map only when the cell is a finite number (including 0); empty/non-numeric omitted. */
+  const parseHOverrideCell = (raw: unknown): number | undefined => {
+    const s = String(raw ?? "").trim();
+    if (s === "") return undefined;
+    const n = parseFloat(s.replace(/,/g, ""));
+    return Number.isFinite(n) ? n : undefined;
+  };
+
+  for (let i = 1; i < values.length; i++) {
+    const row = values[i] ?? [];
+    const slug = String(row[idxSlug] ?? "").trim();
+    if (slug === "") continue;
+    if (commissionBySlug.has(slug)) continue;
+
+    commissionBySlug.set(slug, parseMoneyCell(row[idxCommission]));
+
+    const hParsed = parseHOverrideCell(row[idxH]);
+    if (hParsed !== undefined) {
+      hCommissionBySlug.set(slug, hParsed);
+    }
+  }
+  return { commissionBySlug, hCommissionBySlug };
+}
+
 /**
  * Finds columns by normalized header matching:
- * Ticket_type_Slug · Commission · Display Name · Deposit Name
+ * Ticket_type_Slug · Commission · Display Name · Deposit Name · H Commission
  */
 function parseTicketNamesBySlug(
   values: unknown[][]

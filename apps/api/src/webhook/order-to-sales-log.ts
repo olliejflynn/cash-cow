@@ -6,11 +6,13 @@ export interface OrderToSalesLogOptions {
   defaultSellerCode: string;
   /** Ticket_type_Slug → Commission from the Ticket_rules sheet */
   commissionBySlug: ReadonlyMap<string, number>;
+  /** Ticket_type_Slug → H Commission when Location is H (only keys with a numeric H cell) */
+  hCommissionBySlug: ReadonlyMap<string, number>;
 }
 
 /**
  * Map a WooCommerce order to one or more Sales_Log rows (one per line item).
- * Commission per unit comes from `commissionBySlug` keyed by the same value as `ticket_type`.
+ * Commission per unit comes from `commissionBySlug` (and `hCommissionBySlug` when Location is H).
  */
 export function orderToSalesLogRows(
   order: WooCommerceOrderDto,
@@ -20,7 +22,7 @@ export function orderToSalesLogRows(
   const orderCreatedAt = order.date_created ?? now;
   const orderId = String(order.id);
   const sellerCode = deriveSellerCode(order, options.defaultSellerCode);
-  const { commissionBySlug } = options;
+  const { commissionBySlug, hCommissionBySlug } = options;
 
   return (order.line_items ?? []).map((item) => {
     const qty = Number(item.quantity) || 1;
@@ -29,8 +31,14 @@ export function orderToSalesLogRows(
     const grossAmount = unitPricePaid * qty;
     const ticketType = getTicketType(item);
     const slug = ticketType.trim();
+    const location = getSaleLocationLetter(order, item);
+    const baseCommission = slug === "" ? 0 : (commissionBySlug.get(slug) ?? 0);
     const unitCommission =
-      slug === "" ? 0 : (commissionBySlug.get(slug) ?? 0);
+      slug === ""
+        ? 0
+        : isLocationH(location) && hCommissionBySlug.has(slug)
+          ? (hCommissionBySlug.get(slug) ?? 0)
+          : baseCommission;
     if (slug !== "" && !commissionBySlug.has(slug)) {
       console.warn(
         `[orderToSalesLogRows] No Ticket_rules row for ticket_type slug=${JSON.stringify(slug)} order_id=${orderId}`
@@ -39,7 +47,6 @@ export function orderToSalesLogRows(
     const grossCommission = unitCommission * qty;
     const handInAmount = grossAmount - grossCommission;
     const categoryCompany = getCategoryCompany(item);
-    const location = getSaleLocationLetter(order, item);
 
     return {
       logged_at: now,
@@ -158,6 +165,10 @@ function getSaleLocationLetter(
     orderMeta?.value;
   const s = raw == null ? "" : String(raw).trim();
   return s === "" ? "N/A" : s;
+}
+
+function isLocationH(location: string): boolean {
+  return location.trim().toUpperCase() === "H";
 }
 
 function deriveSellerCode(

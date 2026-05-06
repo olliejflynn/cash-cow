@@ -78,13 +78,14 @@ export class WebhookController {
           ? `${order.id}:${order.order_key}`
           : `${order.id}:${order.date_created ?? Date.now()}`;
 
-      const commissionBySlug =
-        await this.sheetsService.getTicketCommissionBySlug();
+      const { commissionBySlug, hCommissionBySlug } =
+        await this.sheetsService.getTicketCommissionMaps();
       const salesRows = orderToSalesLogRows(order, {
         webhookEventId,
         defaultSellerCode:
           this.configService.get<string>("defaultSellerCode") ?? "UNKNOWN",
         commissionBySlug,
+        hCommissionBySlug,
       });
 
       console.log(
