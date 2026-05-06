@@ -270,7 +270,8 @@ export class SheetsService {
       }),
       client.spreadsheets.values.get({
         spreadsheetId,
-        range: `${this.ticketRulesSheetName}!A:C`,
+        /** Must include Deposit Name column (typically D): Ticket_type_Slug, Commission, Display Name, Deposit Name. */
+        range: `${this.ticketRulesSheetName}!A:Z`,
       }),
       this.getSquareCardTotalForSeller(
         client,
@@ -1677,22 +1678,37 @@ function parseSellerEmailRows(values: unknown[][]): SellerEmailRow[] {
   return out;
 }
 
+function normTicketRulesHeader(cell: unknown): string {
+  return normSheetHeader(
+    String(cell ?? "")
+      .trim()
+      .replace(/^\uFEFF/, "")
+  );
+}
+
+/**
+ * Finds columns by normalized header matching:
+ * Ticket_type_Slug · Commission · Display Name · Deposit Name
+ */
 function parseTicketNamesBySlug(
   values: unknown[][]
 ): Map<string, { displayName: string; depositName: string }> {
   const out = new Map<string, { displayName: string; depositName: string }>();
   if (values.length === 0) return out;
 
-  const header = values[0]?.map((v) => String(v ?? "").trim()) ?? [];
-  const slugIdx = header.findIndex(
-    (h) => normSheetHeader(h) === "ticket_type_slug"
+  const headerRaw = values[0] ?? [];
+  const header = [...headerRaw].map((_c, idx) =>
+    normTicketRulesHeader(headerRaw[idx])
   );
+  const slugIdx = header.findIndex((h) => h === "ticket_type_slug" || h === "slug");
   const displayIdx = header.findIndex(
-    (h) => normSheetHeader(h) === "display_name"
+    (h) => h === "display_name" || h === "display"
   );
   const depositIdx = header.findIndex(
-    (h) => normSheetHeader(h) === "deposit_name"
+    (h) => h === "deposit_name" || h === "deposit"
   );
+
+  /** Default layout: slug | commission | display | deposit when headers are missing/off. */
   const idxSlug = slugIdx >= 0 ? slugIdx : 0;
   const idxDisplay = displayIdx >= 0 ? displayIdx : 2;
   const idxDeposit = depositIdx >= 0 ? depositIdx : 3;
@@ -1700,12 +1716,18 @@ function parseTicketNamesBySlug(
   for (let i = 1; i < values.length; i++) {
     const row = values[i] ?? [];
     const slug = String(row[idxSlug] ?? "").trim();
-    if (slug === "" || out.has(slug)) continue;
-    const displayName = String(row[idxDisplay] ?? "").trim();
+    if (slug === "") continue;
+    const lookupKey = slug.toLowerCase();
+    if (out.has(lookupKey)) continue;
+
+    const displayCell = String(row[idxDisplay] ?? "").trim();
     const depositName = String(row[idxDeposit] ?? "").trim();
-    out.set(slug, {
-      displayName: displayName === "" ? slug : displayName,
-      /** Raw Ticket_rules `deposit_name` cell (may be empty; do not alias to display_name). */
+
+    const displayLabel = displayCell === "" ? slug : displayCell;
+
+    out.set(lookupKey, {
+      displayName: displayLabel,
+      /** Raw Ticket_rules `deposit_name` cell (may be empty). */
       depositName,
     });
   }
@@ -1779,7 +1801,7 @@ function parseUncashedSalesRowsForSeller(
     const unitPricePaid = parseSheetMoneyNumber(
       unitPricePaidIdx >= 0 ? row[unitPricePaidIdx] : 0
     );
-    const ticketNames = ticketNamesBySlug.get(ticketTypeSlug);
+    const ticketNames = ticketNamesBySlug.get(ticketTypeSlug.trim().toLowerCase());
     const ticketDisplayName = isDepositUnitPricePaid(unitPricePaid)
       ? (String(ticketNames?.depositName ?? "").trim() !== ""
           ? String(ticketNames?.depositName ?? "").trim()
