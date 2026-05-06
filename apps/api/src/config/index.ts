@@ -27,15 +27,13 @@ export const config = () => ({
   /** Telegram /cash: B (Dolphin) cash-in tab (same columns as L/M). */
   bCashInSheetName: (process.env.B_CASH_IN_SHEET_NAME ?? "B CASH IN 🐬").trim(),
   /**
-   * Outstanding tab: row 1 headers Seller_Code (A), Outstanding (B). Used by Telegram /cash.
+   * Outstanding tab: read-only for Telegram /balance and /breakdown (/cash does not write it).
    */
   outstandingSheetName: (process.env.OUTSTANDING_SHEET_NAME ?? "Outstanding").trim(),
   /** Sales_Log checkbox column header (must match sheet). */
   salesLogCashedColumnName: (
     process.env.SALES_LOG_CASHED_COLUMN_NAME ?? "cashed?"
   ).trim(),
-  /** Sales_Log Category (Company) label used for Dolphin-only cash-in checkbox updates. */
-  dolphinCategoryLabel: (process.env.DOLPHIN_CATEGORY_LABEL ?? "dolphin").trim(),
   defaultHandInPercent: parseFloat(
     process.env.DEFAULT_HAND_IN_PERCENT ?? "100"
   ),

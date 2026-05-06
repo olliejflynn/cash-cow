@@ -71,14 +71,6 @@ export type SellerCashInPreview = {
   bCashE: number;
   amountWasAuto: boolean;
   amountUsed: number;
-  currentOutstandingL: number;
-  currentOutstandingM: number;
-  currentOutstandingB: number;
-  currentOutstanding: number;
-  newOutstandingL: number;
-  newOutstandingM: number;
-  newOutstandingB: number;
-  newOutstanding: number;
   salesLogRowsToUpdate: number;
   squareRowsPrimary: number;
   squareRowsM: number;
@@ -88,11 +80,6 @@ export type SellerCashInPreview = {
 export type SellerCashInApplyResult = {
   sellerCode: string;
   amountUsed: number;
-  newOutstandingL: number;
-  newOutstandingM: number;
-  newOutstandingB: number;
-  newOutstanding: number;
-  outstandingRowDeleted: boolean;
   salesLogRowsUpdated: number;
   squareRowsDeletedPrimary: number;
   squareRowsDeletedM: number;
@@ -175,7 +162,6 @@ export class SheetsService {
   private bCashInSheetName: string = "B CASH IN 🐬";
   private outstandingSheetName: string = "Outstanding";
   private salesLogCashedColumnName: string = "cashed?";
-  private dolphinCategoryLabel: string = "dolphin";
 
   constructor(private readonly config: ConfigService) {
     this.spreadsheetId = this.config.get<string>("spreadsheetId") ?? "";
@@ -201,8 +187,6 @@ export class SheetsService {
       this.config.get<string>("outstandingSheetName") ?? "Outstanding";
     this.salesLogCashedColumnName =
       this.config.get<string>("salesLogCashedColumnName") ?? "cashed?";
-    this.dolphinCategoryLabel =
-      this.config.get<string>("dolphinCategoryLabel") ?? "dolphin";
   }
 
   private async getSheetsClient(): Promise<sheets_v4.Sheets> {
@@ -1020,14 +1004,6 @@ export class SheetsService {
     if (!Number.isFinite(amountUsed)) {
       throw new Error("Amount is not a valid number.");
     }
-    const newOutstanding =
-      ctx.lCashE + ctx.mCashE + ctx.bCashE + ctx.currentOutstanding - amountUsed;
-    const splitOutstanding = splitOutstandingByPriority(
-      newOutstanding,
-      ctx.mCashE,
-      ctx.lCashE,
-      ctx.bCashE
-    );
     return {
       sellerCode,
       lCashE: ctx.lCashE,
@@ -1035,14 +1011,6 @@ export class SheetsService {
       bCashE: ctx.bCashE,
       amountWasAuto,
       amountUsed,
-      currentOutstandingL: ctx.currentOutstandingL,
-      currentOutstandingM: ctx.currentOutstandingM,
-      currentOutstandingB: ctx.currentOutstandingB,
-      currentOutstanding: ctx.currentOutstanding,
-      newOutstandingL: splitOutstanding.outstandingL,
-      newOutstandingM: splitOutstanding.outstandingM,
-      newOutstandingB: splitOutstanding.outstandingB,
-      newOutstanding,
       salesLogRowsToUpdate: ctx.salesLogMatchCount,
       squareRowsPrimary: ctx.squarePrimaryDeleteCount,
       squareRowsM: ctx.squareMDeleteCount,
@@ -1071,48 +1039,11 @@ export class SheetsService {
     if (!Number.isFinite(amountUsed)) {
       throw new Error("Amount is not a valid number.");
     }
-    const newOutstanding =
-      ctx.lCashE + ctx.mCashE + ctx.bCashE + ctx.currentOutstanding - amountUsed;
-    const splitOutstanding = splitOutstandingByPriority(
-      newOutstanding,
-      ctx.mCashE,
-      ctx.lCashE,
-      ctx.bCashE
-    );
-
-    const outstandingTitle = await this.resolveSheetTitleForConfiguredTab(
-      client,
-      spreadsheetId,
-      this.outstandingSheetName,
-      "Check OUTSTANDING_SHEET_NAME."
-    );
-    const outstandingSheetId = await this.getSheetIdForTitle(
-      client,
-      spreadsheetId,
-      outstandingTitle
-    );
-    const outPrefix = a1SheetRangePrefix(outstandingTitle);
-
-    const outstandingRowDeleted =
-      Math.abs(splitOutstanding.totalOutstanding) < OUTSTANDING_ZERO_EPS &&
-      (ctx.outstandingPrimaryRow1Based != null ||
-        ctx.outstandingDuplicateRows1Based.length > 0);
-    await this.writeOutstandingValue(
-      client,
-      spreadsheetId,
-      outPrefix,
-      outstandingSheetId,
-      sellerCode,
-      splitOutstanding,
-      ctx.outstandingPrimaryRow1Based,
-      ctx.outstandingDuplicateRows1Based
-    );
 
     const salesUpdated = await this.markSalesLogCashedForSeller(
       client,
       spreadsheetId,
-      sellerCode,
-      ctx.bCashE > 0 ? this.dolphinCategoryLabel : undefined
+      sellerCode
     );
 
     let delP = 0;
@@ -1136,14 +1067,6 @@ export class SheetsService {
     return {
       sellerCode,
       amountUsed,
-      newOutstandingL: splitOutstanding.outstandingL,
-      newOutstandingM: splitOutstanding.outstandingM,
-      newOutstandingB: splitOutstanding.outstandingB,
-      newOutstanding:
-        Math.abs(splitOutstanding.totalOutstanding) < OUTSTANDING_ZERO_EPS
-          ? 0
-          : splitOutstanding.totalOutstanding,
-      outstandingRowDeleted,
       salesLogRowsUpdated: salesUpdated,
       squareRowsDeletedPrimary: delP,
       squareRowsDeletedM: delM,
@@ -1154,12 +1077,6 @@ export class SheetsService {
     lCashE: number;
     mCashE: number;
     bCashE: number;
-    currentOutstandingL: number;
-    currentOutstandingM: number;
-    currentOutstandingB: number;
-    currentOutstanding: number;
-    outstandingPrimaryRow1Based: number | null;
-    outstandingDuplicateRows1Based: number[];
     salesLogMatchCount: number;
     squarePrimaryDeleteCount: number;
     squareMDeleteCount: number;
@@ -1183,27 +1100,6 @@ export class SheetsService {
     const mCashE = cash.m.sumE;
     const bCashE = cash.b.sumE;
 
-    const outstandingTitle = await this.resolveSheetTitleForConfiguredTab(
-      client,
-      spreadsheetId,
-      this.outstandingSheetName,
-      "Check OUTSTANDING_SHEET_NAME."
-    );
-    const outRange = `${a1SheetRangePrefix(outstandingTitle)}A:D`;
-    const outRes = await client.spreadsheets.values.get({
-      spreadsheetId,
-      range: outRange,
-    });
-    const outValues = outRes.data.values ?? [];
-    const {
-      currentOutstandingL,
-      currentOutstandingM,
-      currentOutstandingB,
-      currentOutstanding,
-      primaryRow1Based,
-      duplicateRows1Based,
-    } = parseOutstandingForSeller(outValues, sellerCode);
-
     const salesLogRes = await client.spreadsheets.values.get({
       spreadsheetId,
       range: `${this.salesLogSheetName}!A:Z`,
@@ -1212,8 +1108,7 @@ export class SheetsService {
     const salesLogMatchCount = countSalesLogRowsForSeller(
       salesValues,
       sellerCode,
-      this.salesLogCashedColumnName,
-      bCashE > 0 ? this.dolphinCategoryLabel : undefined
+      this.salesLogCashedColumnName
     );
 
     const sqP = await this.countSquareRowsForSeller(
@@ -1233,12 +1128,6 @@ export class SheetsService {
       lCashE,
       mCashE,
       bCashE,
-      currentOutstandingL,
-      currentOutstandingM,
-      currentOutstandingB,
-      currentOutstanding,
-      outstandingPrimaryRow1Based: primaryRow1Based,
-      outstandingDuplicateRows1Based: duplicateRows1Based,
       salesLogMatchCount,
       squarePrimaryDeleteCount: sqP,
       squareMDeleteCount: sqM,
@@ -1265,76 +1154,10 @@ export class SheetsService {
     return id;
   }
 
-  private async writeOutstandingValue(
-    client: sheets_v4.Sheets,
-    spreadsheetId: string,
-    rangePrefix: string,
-    sheetId: number,
-    sellerCode: string,
-    splitOutstanding: {
-      outstandingL: number;
-      outstandingM: number;
-      outstandingB: number;
-      totalOutstanding: number;
-    },
-    primaryRow1Based: number | null,
-    duplicateRows1Based: number[]
-  ): Promise<void> {
-    const abs = Math.abs(splitOutstanding.totalOutstanding);
-    if (abs < OUTSTANDING_ZERO_EPS) {
-      const rowsToDelete = [
-        ...(primaryRow1Based != null ? [primaryRow1Based] : []),
-        ...duplicateRows1Based,
-      ];
-      if (rowsToDelete.length > 0) {
-        await this.deleteSheetRowsBy1BasedIndices(
-          client,
-          spreadsheetId,
-          sheetId,
-          rowsToDelete
-        );
-      }
-      return;
-    }
-
-    const cellL = String(splitOutstanding.outstandingL);
-    const cellM = String(splitOutstanding.outstandingM);
-    const cellB = String(splitOutstanding.outstandingB);
-    if (primaryRow1Based != null) {
-      const colB = `${rangePrefix}B${primaryRow1Based}`;
-      const colD = `${rangePrefix}D${primaryRow1Based}`;
-      await client.spreadsheets.values.update({
-        spreadsheetId,
-        range: `${colB}:${colD}`,
-        valueInputOption: "USER_ENTERED",
-        requestBody: { values: [[cellL, cellM, cellB]] },
-      });
-      if (duplicateRows1Based.length > 0) {
-        await this.deleteSheetRowsBy1BasedIndices(
-          client,
-          spreadsheetId,
-          sheetId,
-          duplicateRows1Based
-        );
-      }
-      return;
-    }
-
-    const appendRange = `${rangePrefix}A:D`;
-    await client.spreadsheets.values.append({
-      spreadsheetId,
-      range: appendRange,
-      valueInputOption: "USER_ENTERED",
-      insertDataOption: "INSERT_ROWS",
-      requestBody: { values: [[sellerCode, cellL, cellM, cellB]] },
-    });
-  }
-
   private async markSalesLogCashedForSeller(
     client: sheets_v4.Sheets,
     spreadsheetId: string,
-    sellerCode: string,
-    categoryFilter?: string
+    sellerCode: string
   ): Promise<number> {
     const response = await client.spreadsheets.values.get({
       spreadsheetId,
@@ -1351,9 +1174,6 @@ export class SheetsService {
     const cashedIdx = header.findIndex(
       (h) => normSheetHeader(h) === normSheetHeader(this.salesLogCashedColumnName)
     );
-    const categoryIdx = header.findIndex(
-      (h) => normSheetHeader(h) === "category_(company)"
-    );
     if (sellerIdx < 0) {
       throw new Error("Sales_Log must include a seller_code column.");
     }
@@ -1362,22 +1182,13 @@ export class SheetsService {
         `Sales_Log must include column "${this.salesLogCashedColumnName}".`
       );
     }
-    if (categoryFilter != null && categoryIdx < 0) {
-      throw new Error('Sales_Log must include column "Category (Company)".');
-    }
 
     const updates: sheets_v4.Schema$ValueRange[] = [];
-    const categoryFilterNorm = normalizeCompanyCategory(categoryFilter);
     for (let i = 1; i < values.length; i++) {
       const row = values[i] ?? [];
       const rowSeller = normalizeCashInSellerDigits(String(row[sellerIdx] ?? ""));
       if (rowSeller !== sellerCode) continue;
-      if (
-        categoryFilterNorm !== "" &&
-        normalizeCompanyCategory(row[categoryIdx]) !== categoryFilterNorm
-      ) {
-        continue;
-      }
+      if (isTruthySheetCell(row[cashedIdx])) continue;
       const rowNumber = i + 1;
       const col = toA1Column(cashedIdx + 1);
       updates.push({
@@ -1671,8 +1482,6 @@ export class SheetsService {
   }
 }
 
-const OUTSTANDING_ZERO_EPS = 1e-9;
-
 function normSheetHeader(h: string): string {
   return h.trim().toLowerCase().replace(/\s+/g, "_");
 }
@@ -1780,85 +1589,6 @@ function parseSheetMoneyNumber(value: unknown): number {
   return Number.isFinite(n) ? n : 0;
 }
 
-function parseOutstandingForSeller(
-  values: unknown[][],
-  sellerCode: string
-): {
-  currentOutstandingL: number;
-  currentOutstandingM: number;
-  currentOutstandingB: number;
-  currentOutstanding: number;
-  primaryRow1Based: number | null;
-  duplicateRows1Based: number[];
-} {
-  if (values.length === 0) {
-    return {
-      currentOutstandingL: 0,
-      currentOutstandingM: 0,
-      currentOutstandingB: 0,
-      currentOutstanding: 0,
-      primaryRow1Based: null,
-      duplicateRows1Based: [],
-    };
-  }
-  const headerRow = values[0] ?? [];
-  const idxSeller = headerRow.findIndex(
-    (c) => normSheetHeader(String(c ?? "")) === "seller_code"
-  );
-  const idxOutL = headerRow.findIndex(
-    (c) => normSheetHeader(String(c ?? "")) === "outstanding_l"
-  );
-  const idxOutM = headerRow.findIndex(
-    (c) => normSheetHeader(String(c ?? "")) === "outstanding_m"
-  );
-  const idxOutB = headerRow.findIndex(
-    (c) => normSheetHeader(String(c ?? "")) === "outstanding_b"
-  );
-  const idxLegacyOut = headerRow.findIndex(
-    (c) => normSheetHeader(String(c ?? "")) === "outstanding"
-  );
-  const hasSplit = idxOutL >= 0 && idxOutM >= 0;
-  if (idxSeller < 0 || (!hasSplit && idxLegacyOut < 0)) {
-    throw new Error(
-      'Outstanding tab row 1 must include headers "Seller_Code", "Outstanding L", and "Outstanding M".'
-    );
-  }
-
-  let sumL = 0;
-  let sumM = 0;
-  let sumB = 0;
-  let primaryRow1Based: number | null = null;
-  const duplicateRows1Based: number[] = [];
-  for (let i = 1; i < values.length; i++) {
-    const row = values[i] ?? [];
-    const rowSeller = normalizeCashInSellerDigits(String(row[idxSeller] ?? ""));
-    if (rowSeller !== sellerCode) continue;
-    const outstandingL = hasSplit ? parseSheetMoneyNumber(row[idxOutL]) : 0;
-    const outstandingM = hasSplit
-      ? parseSheetMoneyNumber(row[idxOutM])
-      : parseSheetMoneyNumber(row[idxLegacyOut]);
-    const outstandingB = idxOutB >= 0 ? parseSheetMoneyNumber(row[idxOutB]) : 0;
-    sumL += outstandingL;
-    sumM += outstandingM;
-    sumB += outstandingB;
-    const row1Based = i + 1;
-    if (primaryRow1Based == null) {
-      primaryRow1Based = row1Based;
-    } else {
-      duplicateRows1Based.push(row1Based);
-    }
-  }
-
-  return {
-    currentOutstandingL: sumL,
-    currentOutstandingM: sumM,
-    currentOutstandingB: sumB,
-    currentOutstanding: sumL + sumM + sumB,
-    primaryRow1Based,
-    duplicateRows1Based,
-  };
-}
-
 function parseAllOutstandingRows(values: unknown[][]): SellerOutstandingRow[] {
   if (values.length === 0) return [];
   const headerRow = values[0] ?? [];
@@ -1924,60 +1654,6 @@ function parseAllOutstandingRows(values: unknown[][]): SellerOutstandingRow[] {
   });
 }
 
-function splitOutstandingByPriority(
-  totalOutstanding: number,
-  mCashIn: number,
-  lCashIn: number,
-  bCashIn: number
-): {
-  outstandingL: number;
-  outstandingM: number;
-  outstandingB: number;
-  totalOutstanding: number;
-} {
-  if (!Number.isFinite(totalOutstanding)) {
-    return { outstandingL: 0, outstandingM: 0, outstandingB: 0, totalOutstanding: 0 };
-  }
-  if (Math.abs(totalOutstanding) < OUTSTANDING_ZERO_EPS) {
-    return { outstandingL: 0, outstandingM: 0, outstandingB: 0, totalOutstanding: 0 };
-  }
-
-  if (totalOutstanding > 0) {
-    // Preserve legacy behavior when B is not in play.
-    if (Math.abs(bCashIn) < OUTSTANDING_ZERO_EPS) {
-      const cappedM = Math.min(totalOutstanding, Math.max(0, mCashIn));
-      const outstandingL = totalOutstanding - cappedM;
-      return { outstandingL, outstandingM: cappedM, outstandingB: 0, totalOutstanding };
-    }
-
-    const cappedM = Math.min(totalOutstanding, Math.max(0, mCashIn));
-    const afterM = totalOutstanding - cappedM;
-    const cappedL = Math.min(afterM, Math.max(0, lCashIn));
-    const outstandingB = afterM - cappedL;
-    return {
-      outstandingL: cappedL,
-      outstandingM: cappedM,
-      outstandingB,
-      totalOutstanding,
-    };
-  }
-
-  // Negative outstanding means seller is owed; keep it on M first then L, then B.
-  const remainingAbs = Math.abs(totalOutstanding);
-  const mCap = Math.max(0, mCashIn);
-  const lCap = Math.max(0, lCashIn);
-  const mShare = Math.min(remainingAbs, mCap);
-  const afterM = remainingAbs - mShare;
-  const lShare = Math.min(afterM, lCap);
-  const afterL = afterM - lShare;
-  return {
-    outstandingL: -lShare,
-    outstandingM: -mShare,
-    outstandingB: -afterL,
-    totalOutstanding,
-  };
-}
-
 function parseSellerEmailRows(values: unknown[][]): SellerEmailRow[] {
   if (values.length === 0) return [];
   const header = values[0] ?? [];
@@ -2029,10 +1705,17 @@ function parseTicketNamesBySlug(
     const depositName = String(row[idxDeposit] ?? "").trim();
     out.set(slug, {
       displayName: displayName === "" ? slug : displayName,
-      depositName: depositName === "" ? displayName || slug : depositName,
+      /** Raw Ticket_rules `deposit_name` cell (may be empty; do not alias to display_name). */
+      depositName,
     });
   }
   return out;
+}
+
+/** Sales_Log rows with unit price £20 are deposits; label from Ticket_rules `deposit_name`. */
+function isDepositUnitPricePaid(unitPricePaid: number): boolean {
+  if (!Number.isFinite(unitPricePaid)) return false;
+  return Math.round(unitPricePaid * 100) / 100 === 20;
 }
 
 function parseUncashedSalesRowsForSeller(
@@ -2097,10 +1780,11 @@ function parseUncashedSalesRowsForSeller(
       unitPricePaidIdx >= 0 ? row[unitPricePaidIdx] : 0
     );
     const ticketNames = ticketNamesBySlug.get(ticketTypeSlug);
-    const ticketDisplayName =
-      Math.abs(unitPricePaid - 20) < 1e-9
-        ? ticketNames?.depositName ?? ticketNames?.displayName ?? ticketTypeSlug
-        : ticketNames?.displayName ?? ticketTypeSlug;
+    const ticketDisplayName = isDepositUnitPricePaid(unitPricePaid)
+      ? (String(ticketNames?.depositName ?? "").trim() !== ""
+          ? String(ticketNames?.depositName ?? "").trim()
+          : ticketTypeSlug)
+      : (ticketNames?.displayName ?? ticketTypeSlug);
     const qty = parseSheetMoneyNumber(qtyIdx >= 0 ? row[qtyIdx] : 0);
     const orderStatus = String(
       orderStatusIdx >= 0 ? row[orderStatusIdx] ?? "" : ""
@@ -2150,8 +1834,7 @@ function isCancelledOrderStatus(status: string): boolean {
 function countSalesLogRowsForSeller(
   values: unknown[][],
   sellerCode: string,
-  cashedColumnHeader: string,
-  categoryFilter?: string
+  cashedColumnHeader: string
 ): number {
   if (values.length < 2) return 0;
   const header = values[0]?.map((v) => String(v).trim()) ?? [];
@@ -2161,30 +1844,16 @@ function countSalesLogRowsForSeller(
   const cashedIdx = header.findIndex(
     (h) => normSheetHeader(h) === normSheetHeader(cashedColumnHeader)
   );
-  const categoryIdx = header.findIndex(
-    (h) => normSheetHeader(h) === "category_(company)"
-  );
   if (sellerIdx < 0 || cashedIdx < 0) return 0;
-  if (categoryFilter != null && categoryIdx < 0) return 0;
-  const categoryFilterNorm = normalizeCompanyCategory(categoryFilter);
   let n = 0;
   for (let i = 1; i < values.length; i++) {
     const row = values[i] ?? [];
     const rowSeller = normalizeCashInSellerDigits(String(row[sellerIdx] ?? ""));
     if (rowSeller !== sellerCode) continue;
-    if (
-      categoryFilterNorm !== "" &&
-      normalizeCompanyCategory(row[categoryIdx]) !== categoryFilterNorm
-    ) {
-      continue;
-    }
+    if (isTruthySheetCell(row[cashedIdx])) continue;
     n += 1;
   }
   return n;
-}
-
-function normalizeCompanyCategory(value: unknown): string {
-  return String(value ?? "").trim().toLowerCase();
 }
 
 function squareRowSellerMatches(cell: unknown, sellerCodeNorm: string): boolean {

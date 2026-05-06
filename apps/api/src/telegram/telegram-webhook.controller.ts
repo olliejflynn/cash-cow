@@ -548,14 +548,7 @@ function formatCashPreview(p: SellerCashInPreview): string {
     `M (CASH IN): ${formatMoney(p.mCashE)}\n` +
     `B (CASH IN): ${formatMoney(p.bCashE)}\n` +
     `${amtNote}: ${formatMoney(p.amountUsed)}\n` +
-    `Current outstanding L: ${formatMoney(p.currentOutstandingL)}\n` +
-    `Current outstanding M: ${formatMoney(p.currentOutstandingM)}\n` +
-    `Current outstanding B: ${formatMoney(p.currentOutstandingB)}\n` +
-    `Current outstanding total: ${formatMoney(p.currentOutstanding)}\n` +
-    `New outstanding L: ${formatMoney(p.newOutstandingL)}\n` +
-    `New outstanding M: ${formatMoney(p.newOutstandingM)}\n` +
-    `New outstanding B: ${formatMoney(p.newOutstandingB)}\n` +
-    `New outstanding total: ${formatMoney(p.newOutstanding)}\n\n` +
+    `Outstanding sheet: not updated here (maintain manually).\n\n` +
     `Sales_Log rows to mark cashed: ${p.salesLogRowsToUpdate}\n` +
     `Square_payments rows to delete: ${p.squareRowsPrimary}\n` +
     `M Square_payments rows to delete: ${p.squareRowsM}\n\n` +
@@ -564,17 +557,10 @@ function formatCashPreview(p: SellerCashInPreview): string {
 }
 
 function formatCashApplySuccess(r: SellerCashInApplyResult): string {
-  const outMsg = r.outstandingRowDeleted
-    ? "Outstanding row removed (balance cleared)."
-    : `New outstanding — L: ${formatMoney(r.newOutstandingL)}, M: ${formatMoney(
-        r.newOutstandingM
-      )}, B: ${formatMoney(r.newOutstandingB)}, Total: ${formatMoney(
-        r.newOutstanding
-      )}.`;
   return (
     `Cash-in complete — seller ${r.sellerCode}\n\n` +
     `Amount applied: ${formatMoney(r.amountUsed)}\n` +
-    `${outMsg}\n` +
+    `Outstanding sheet: not updated — maintain manually.\n` +
     `Sales_Log rows marked cashed: ${r.salesLogRowsUpdated}\n` +
     `Square_payments deleted: ${r.squareRowsDeletedPrimary}\n` +
     `M Square_payments deleted: ${r.squareRowsDeletedM}`
