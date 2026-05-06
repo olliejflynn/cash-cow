@@ -913,6 +913,12 @@ function formatBreakdownSaleEntry(
       : sale.ticketDisplayName;
   const qty = `X${formatNumberCompact(sale.qty)}`.padEnd(widths.qty, " ");
   const name = (ticketDisplay || "-").padEnd(widths.name, " ");
+  const orderNumber = String(sale.orderId ?? "").trim() || "-";
+  if (sale.isCancelled) {
+    return `<b>${escapeHtml(orderNumber)}</b> ${escapeHtml(
+      `${qty} ${name} : CANCELED`
+    )}`;
+  }
   const gross = formatMoneyCompact(sale.grossAmount).padStart(
     widths.gross,
     " "
@@ -927,12 +933,6 @@ function formatBreakdownSaleEntry(
   );
   const locRaw = sale.location.trim() === "" ? "N/A" : sale.location.trim();
   const loc = locRaw.padEnd(widths.location, " ");
-  const orderNumber = String(sale.orderId ?? "").trim() || "-";
-  if (sale.isCancelled) {
-    return `<b>${escapeHtml(orderNumber)}</b> ${escapeHtml(
-      `${qty} ${name} : CANCELED | ${loc.trimEnd()}`
-    )}`;
-  }
   const row = `${qty} ${name} : ${gross} | ${commission} | ${handIn} | ${loc}`;
   return `<b>${escapeHtml(orderNumber)}</b> ${escapeHtml(row)}`;
 }
@@ -978,7 +978,9 @@ function computeBreakdownSaleWidths(sales: SellerUncashedSaleBreakdownRow[]): {
     ),
     location: Math.max(
       3,
-      ...sales.map((sale) => locationLabel(sale).length)
+      ...sales
+        .filter((sale) => !sale.isCancelled)
+        .map((sale) => locationLabel(sale).length)
     ),
   };
 }
