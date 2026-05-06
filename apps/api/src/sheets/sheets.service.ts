@@ -94,7 +94,7 @@ export type SellerOutstandingRow = {
   outstanding: number;
 };
 
-/** Seller code -> email map from Square IDs tab headers user_id/email. */
+/** Seller code (digits from `user_id`) -> email from Users sheet. */
 export type SellerEmailRow = {
   sellerCode: string;
   email: string;
@@ -938,7 +938,10 @@ export class SheetsService {
     return parseAllOutstandingRows(values);
   }
 
-  /** Read seller code/email rows from Square IDs tab (`user_id`, `email`). */
+  /**
+   * Read seller code / email from the Users tab (Telegram /balance).
+   * Expected row 1: `user_id`, `first_name`, `last_name`, `email`, … — only `user_id` and `email` are required.
+   */
   async getSellerEmailRows(): Promise<SellerEmailRow[]> {
     const client = await this.getSheetsClient();
     const spreadsheetId = this.spreadsheetId.trim();
@@ -948,8 +951,8 @@ export class SheetsService {
     const title = await this.resolveSheetTitleForConfiguredTab(
       client,
       spreadsheetId,
-      this.squareIdsSheetName,
-      "Check SQUARE_IDS_SHEET_NAME."
+      this.usersSheetName,
+      "Check USERS_SHEET_NAME."
     );
     const range = `${a1SheetRangePrefix(title)}A:Z`;
     const response = await client.spreadsheets.values.get({
@@ -1655,27 +1658,43 @@ function parseAllOutstandingRows(values: unknown[][]): SellerOutstandingRow[] {
   });
 }
 
+function normUsersSheetHeader(cell: unknown): string {
+  return normSheetHeader(
+    String(cell ?? "")
+      .trim()
+      .replace(/^\uFEFF/, "")
+  );
+}
+
 function parseSellerEmailRows(values: unknown[][]): SellerEmailRow[] {
   if (values.length === 0) return [];
-  const header = values[0] ?? [];
-  const userIdIdx = header.findIndex(
-    (c) => normSheetHeader(String(c ?? "")) === "user_id"
-  );
-  const emailIdx = header.findIndex(
-    (c) => normSheetHeader(String(c ?? "")) === "email"
-  );
+  const headerRaw = values[0] ?? [];
+  const header = headerRaw.map((c) => normUsersSheetHeader(c));
+  const userIdIdx = header.findIndex((h) => h === "user_id");
+  const emailIdx = header.findIndex((h) => h === "email");
   if (userIdIdx < 0 || emailIdx < 0) {
-    return [];
+    throw new Error(
+      'Users tab row 1 must include headers "user_id" and "email".'
+    );
   }
-  const out: SellerEmailRow[] = [];
+  /** Prefer first non-empty email if duplicate user_id rows exist. */
+  const bySeller = new Map<string, string>();
   for (let i = 1; i < values.length; i++) {
     const row = values[i] ?? [];
     const sellerCode = normalizeCashInSellerDigits(String(row[userIdIdx] ?? ""));
     if (sellerCode === "") continue;
     const email = String(row[emailIdx] ?? "").trim();
-    out.push({ sellerCode, email });
+    const existing = bySeller.get(sellerCode) ?? "";
+    if (existing === "" && email !== "") {
+      bySeller.set(sellerCode, email);
+    } else if (!bySeller.has(sellerCode)) {
+      bySeller.set(sellerCode, email);
+    }
   }
-  return out;
+  return [...bySeller.entries()].map(([sellerCode, email]) => ({
+    sellerCode,
+    email,
+  }));
 }
 
 function normTicketRulesHeader(cell: unknown): string {
