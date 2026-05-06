@@ -39,6 +39,7 @@ export function orderToSalesLogRows(
     const grossCommission = unitCommission * qty;
     const handInAmount = grossAmount - grossCommission;
     const categoryCompany = getCategoryCompany(item);
+    const location = getSaleLocationLetter(order, item);
 
     return {
       logged_at: now,
@@ -56,7 +57,9 @@ export function orderToSalesLogRows(
       seller_code: sellerCode,
       "Category (Company)": categoryCompany,
       hand_in_amount: String(handInAmount),
+      notes: "",
       "cashed?": "FALSE",
+      Location: location,
     };
   });
 }
@@ -132,6 +135,29 @@ function getLineItemMeta(
   | undefined {
   const meta = Array.isArray(item.meta_data) ? item.meta_data : [];
   return meta.find((m) => m && typeof m === "object" && m.key === key);
+}
+
+function getOrderMeta(
+  order: WooCommerceOrderDto,
+  key: string
+): { key?: string; value?: unknown } | undefined {
+  const meta = Array.isArray(order.meta_data) ? order.meta_data : [];
+  return meta.find((m) => m && typeof m === "object" && m.key === key);
+}
+
+/** WooCommerce meta key `loc` on the line item, else on the order. */
+function getSaleLocationLetter(
+  order: WooCommerceOrderDto,
+  item: WooCommerceOrderDto["line_items"][number]
+): string {
+  const lineMeta = getLineItemMeta(item, "loc");
+  const orderMeta = getOrderMeta(order, "loc");
+  const raw =
+    lineMeta?.display_value ??
+    lineMeta?.value ??
+    orderMeta?.value;
+  const s = raw == null ? "" : String(raw).trim();
+  return s === "" ? "N/A" : s;
 }
 
 function deriveSellerCode(

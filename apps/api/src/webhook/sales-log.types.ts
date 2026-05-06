@@ -17,6 +17,9 @@ export interface SalesLogRow {
   seller_code: string;
   "Category (Company)": string;
   hand_in_amount: string;
+  notes: string;
   /** Checkbox column on Sales_Log; new rows start unchecked. */
   "cashed?": string;
+  /** From WooCommerce meta key `loc` (line item, else order); `N/A` if missing. */
+  Location: string;
 }

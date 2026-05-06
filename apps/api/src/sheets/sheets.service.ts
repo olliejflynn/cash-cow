@@ -32,7 +32,9 @@ const SALES_LOG_COLUMNS: (keyof SalesLogRow)[] = [
   "seller_code",
   "Category (Company)",
   "hand_in_amount",
+  "notes",
   "cashed?",
+  "Location",
 ];
 /** Matches sheet headers: Payment ID, Payment Time, Team Member, Seller ID, Amount (cents), Status */
 const SQUARE_PAYMENT_COLUMNS: (keyof SquarePaymentRow)[] = [
