@@ -20,7 +20,20 @@ import type {
 } from "../sheets/sheets.service";
 import { SheetsService } from "../sheets/sheets.service";
 
-const HELP_REPLY = "This will display a list of commands.";
+/** HTML body for /help (parse_mode HTML). */
+function formatHelpMessageHtml(): string {
+  return (
+    `<b>📒 Cash Cow — commands</b>\n\n` +
+    `<b>💰 /balance</b> <code>[seller_code]</code>\n` +
+    `<i>Overview of cash-in (L · M · B) and outstanding per seller. Omit the code to list everyone.</i>\n\n` +
+    `<b>💷 /cash</b> <code>&lt;seller_code&gt;</code> <code>[amount]</code>\n` +
+    `<i>Record a cash-in: marks every Sales_Log row for that seller as cashed, updates Outstanding, and clears matching Square rows when applicable. Without an amount, settlement = L+M+B cash-in plus full outstanding.</i>\n\n` +
+    `<b>📊 /breakdown</b> <code>&lt;seller_code&gt;</code>\n` +
+    `<i>Uncashed sales detail, commissions, hand-in vs cards, and location.</i>\n\n` +
+    `<b>❔ /help</b>\n` +
+    `<i>Show this message.</i>`
+  );
+}
 
 /** Telegram sends this when setWebhook included secret_token (name is case-insensitive). */
 const TELEGRAM_SECRET_HEADER = "X-Telegram-Bot-Api-Secret-Token";
@@ -33,6 +46,9 @@ const CASH_CANCEL_DATA = "cfn";
 const TELEGRAM_CALLBACK_DATA_MAX_BYTES = 64;
 
 const seenCashCallbackIds = new Set<string>();
+
+/** `${chatId}:${messageId}` — preview cancelled; Confirm must not apply (backup if UI race). */
+const cancelledCashPreviewMessageKeys = new Set<string>();
 
 @Controller("telegram")
 export class TelegramWebhookController {
@@ -85,7 +101,8 @@ export class TelegramWebhookController {
     if (isHelpCommand(text)) {
       await telegramSendMessage(token, {
         chat_id: chatId,
-        text: HELP_REPLY,
+        text: formatHelpMessageHtml(),
+        parse_mode: "HTML",
       });
       return { ok: true };
     }
@@ -101,7 +118,8 @@ export class TelegramWebhookController {
       if (!cashParsed.ok) {
         await telegramSendMessage(token, {
           chat_id: chatId,
-          text: cashParsed.error,
+          text: formatCashCommandUsageHtml(cashParsed.error),
+          parse_mode: "HTML",
         });
         return { ok: true };
       }
@@ -119,7 +137,8 @@ export class TelegramWebhookController {
       if (!breakdownParsed.ok) {
         await telegramSendMessage(token, {
           chat_id: chatId,
-          text: breakdownParsed.error,
+          text: formatBreakdownUsageHtml(breakdownParsed.error),
+          parse_mode: "HTML",
         });
         return { ok: true };
       }
@@ -140,9 +159,12 @@ export class TelegramWebhookController {
   ): Promise<void> {
     const data = callback.data.trim();
     if (data === CASH_CANCEL_DATA) {
+      const previewKey = `${callback.chatId}:${callback.messageId}`;
+      cancelledCashPreviewMessageKeys.add(previewKey);
+      await telegramCancelCashPreviewMessage(token, callback);
       await telegramAnswerCallbackQuery(token, {
         callback_query_id: callback.callbackQueryId,
-        text: "Cancelled.",
+        text: "✓ Preview cancelled — buttons removed",
       });
       return;
     }
@@ -157,7 +179,7 @@ export class TelegramWebhookController {
     if (seenCashCallbackIds.has(callback.callbackQueryId)) {
       await telegramAnswerCallbackQuery(token, {
         callback_query_id: callback.callbackQueryId,
-        text: "Already processed.",
+        text: "✓ Already processed",
       });
       return;
     }
@@ -170,7 +192,17 @@ export class TelegramWebhookController {
     if (parsed == null) {
       await telegramAnswerCallbackQuery(token, {
         callback_query_id: callback.callbackQueryId,
-        text: "Invalid confirm payload.",
+        text: "⚠ Invalid confirmation",
+      });
+      return;
+    }
+
+    const previewKey = `${callback.chatId}:${callback.messageId}`;
+    if (cancelledCashPreviewMessageKeys.has(previewKey)) {
+      cancelledCashPreviewMessageKeys.delete(previewKey);
+      await telegramAnswerCallbackQuery(token, {
+        callback_query_id: callback.callbackQueryId,
+        text: "This preview was cancelled — run /cash again.",
       });
       return;
     }
@@ -191,15 +223,23 @@ export class TelegramWebhookController {
       console.error("[TelegramWebhook] /cash apply error", msg);
       await telegramSendMessage(token, {
         chat_id: callback.chatId,
-        text: `Cash-in failed.\n${msg}`,
+        text: formatCashApplyErrorHtml(msg),
+        parse_mode: "HTML",
       });
       return;
     }
 
     await telegramSendMessage(token, {
       chat_id: callback.chatId,
-      text: formatCashApplySuccess(result),
+      text: formatCashApplySuccessHtml(result),
+      parse_mode: "HTML",
     });
+
+    await telegramRemoveInlineKeyboardFromMessage(
+      token,
+      callback.chatId,
+      callback.messageId
+    );
   }
 
   private async handleCashPreviewCommand(
@@ -220,7 +260,8 @@ export class TelegramWebhookController {
       console.error("[TelegramWebhook] /cash preview error", msg);
       await telegramSendMessage(token, {
         chat_id: chatId,
-        text: `Could not prepare cash-in preview.\n${msg}`,
+        text: formatCashPreviewErrorHtml(msg),
+        parse_mode: "HTML",
       });
       return;
     }
@@ -232,21 +273,21 @@ export class TelegramWebhookController {
     if (confirmData == null) {
       await telegramSendMessage(token, {
         chat_id: chatId,
-        text:
-          "Cannot build confirm button (payload too long for Telegram). " +
-          "Try a shorter seller code or amount.",
+        text: formatCashConfirmPayloadTooLongHtml(),
+        parse_mode: "HTML",
       });
       return;
     }
 
     await telegramSendMessage(token, {
       chat_id: chatId,
-      text: formatCashPreview(preview),
+      text: formatCashPreviewHtml(preview),
+      parse_mode: "HTML",
       reply_markup: {
         inline_keyboard: [
           [
-            { text: "Confirm cash-in", callback_data: confirmData },
-            { text: "Cancel", callback_data: CASH_CANCEL_DATA },
+            { text: "✅ Confirm cash-in", callback_data: confirmData },
+            { text: "❌ Cancel", callback_data: CASH_CANCEL_DATA },
           ],
         ],
       },
@@ -273,7 +314,8 @@ export class TelegramWebhookController {
       console.error("[TelegramWebhook] /balance sheets error", msg);
       await telegramSendMessage(token, {
         chat_id: chatId,
-        text: `Could not load cash-in data.\n${msg}`,
+        text: formatBalanceLoadErrorHtml(msg),
+        parse_mode: "HTML",
       });
       return;
     }
@@ -304,7 +346,8 @@ export class TelegramWebhookController {
     if (rows.length === 0 && outstandingBySeller.size === 0) {
       await telegramSendMessage(token, {
         chat_id: chatId,
-        text: "No sellers found on cash-in or outstanding tabs.",
+        text: formatBalanceEmptyHtml(),
+        parse_mode: "HTML",
       });
       return;
     }
@@ -322,7 +365,8 @@ export class TelegramWebhookController {
       if (row == null && outstanding.outstanding === 0) {
         await telegramSendMessage(token, {
           chat_id: chatId,
-          text: `Seller ${sellerCode} was not found.`,
+          text: formatSellerNotFoundHtml(sellerCode),
+          parse_mode: "HTML",
         });
         return;
       }
@@ -395,7 +439,8 @@ export class TelegramWebhookController {
       console.error("[TelegramWebhook] /breakdown sheets error", msg);
       await telegramSendMessage(token, {
         chat_id: chatId,
-        text: `Could not load sales breakdown.\n${msg}`,
+        text: formatBreakdownLoadErrorHtml(msg),
+        parse_mode: "HTML",
       });
       return;
     }
@@ -414,6 +459,9 @@ export class TelegramWebhookController {
 type CallbackQueryExtract = {
   callbackQueryId: string;
   chatId: number;
+  messageId: number;
+  /** Present when the callback is from a text message (cash previews). */
+  messageText?: string;
   data: string;
 };
 
@@ -430,7 +478,23 @@ function extractCallbackQuery(body: unknown): CallbackQueryExtract | null {
   if (!isRecord(chat)) return null;
   const chatId = chat["id"];
   if (typeof chatId !== "number" || !Number.isFinite(chatId)) return null;
-  return { callbackQueryId: id, chatId, data };
+  const messageIdRaw = message["message_id"];
+  if (
+    typeof messageIdRaw !== "number" ||
+    !Number.isFinite(messageIdRaw)
+  ) {
+    return null;
+  }
+  const messageTextRaw = message["text"];
+  const messageText =
+    typeof messageTextRaw === "string" ? messageTextRaw : undefined;
+  return {
+    callbackQueryId: id,
+    chatId,
+    messageId: messageIdRaw,
+    messageText,
+    data,
+  };
 }
 
 type CashParseResult =
@@ -448,13 +512,17 @@ function parseCashCommand(text: string): CashParseResult | null {
     return {
       ok: false,
       error:
-        "Usage: /cash <seller_code> [<amount>]\n" +
-        "Omit amount to use L+M+B CASH IN totals from the sheet.",
+        "Provide a seller code (digits only).\n" +
+        "• Omit the amount → full settlement: L+M+B cash-in plus outstanding; every Sales_Log row for that seller is marked cashed.\n" +
+        "• Or add an amount for a custom hand-in.",
     };
   }
   const sellerRaw = (parts[1] ?? "").trim();
   if (!/^\d+$/.test(sellerRaw)) {
-    return { ok: false, error: "Seller code must be digits only." };
+    return {
+      ok: false,
+      error: "Seller code must contain digits only (no letters or spaces).",
+    };
   }
   const sellerCode = normalizeSellerCode(sellerRaw);
   if (parts.length === 2) {
@@ -463,13 +531,16 @@ function parseCashCommand(text: string): CashParseResult | null {
   if (parts.length > 3) {
     return {
       ok: false,
-      error: "Too many arguments. Use: /cash <seller_code> [<amount>]",
+      error: "Too many arguments. Use /cash <seller_code> or /cash <seller_code> <amount>.",
     };
   }
   const amtRaw = (parts[2] ?? "").trim().replace(/,/g, "");
   const n = parseFloat(amtRaw);
   if (!Number.isFinite(n)) {
-    return { ok: false, error: "Amount is not a valid number." };
+    return {
+      ok: false,
+      error: "Amount must be a valid number (commas allowed).",
+    };
   }
   return { ok: true, sellerCode, explicitAmount: n };
 }
@@ -489,12 +560,15 @@ function parseBreakdownCommand(text: string): BreakdownParseResult | null {
   if (parts.length !== 2) {
     return {
       ok: false,
-      error: "Usage: /breakdown <seller_code>",
+      error: "Use /breakdown <seller_code> (seller code = digits only).",
     };
   }
   const sellerRaw = (parts[1] ?? "").trim();
   if (!/^\d+$/.test(sellerRaw)) {
-    return { ok: false, error: "Seller code must be digits only." };
+    return {
+      ok: false,
+      error: "Seller code must contain digits only.",
+    };
   }
   return { ok: true, sellerCode: normalizeSellerCode(sellerRaw) };
 }
@@ -538,44 +612,126 @@ function encodeAmountForCallbackToken(amount: number): string {
   return String(amount);
 }
 
-function formatCashPreview(p: SellerCashInPreview): string {
-  const amtNote = p.amountWasAuto
-    ? "Hand-in amount (auto, L CASH IN + M CASH IN + B CASH IN)"
-    : "Hand-in amount (you entered)";
-  const before =
+function formatCashPreviewHtml(p: SellerCashInPreview): string {
+  const settlementNote = p.amountWasAuto
+    ? "<i>Full settlement — L+M+B cash-in (column E) plus current outstanding total.</i>"
+    : "<i>Custom amount — you entered this hand-in.</i>";
+  const outstandingBefore =
     p.currentOutstanding === 0
-      ? "Current Outstanding tab: (none)"
-      : `Current Outstanding tab: L ${formatMoney(p.currentOutstandingL)} | M ${formatMoney(p.currentOutstandingM)} | B ${formatMoney(p.currentOutstandingB)} (total ${formatMoney(p.currentOutstanding)})`;
-  const after =
+      ? "<i>No outstanding balance on file.</i>"
+      : `L ${formatMoney(p.currentOutstandingL)} · M ${formatMoney(
+          p.currentOutstandingM
+        )} · B ${formatMoney(p.currentOutstandingB)} → <b>${formatMoney(
+          p.currentOutstanding
+        )}</b> total`;
+  const outstandingAfter =
     p.newOutstanding === 0
-      ? "After confirm: Outstanding row removed (fully settled)."
-      : `After confirm: Outstanding tab → L ${formatMoney(p.newOutstandingL)} | M ${formatMoney(p.newOutstandingM)} | B ${formatMoney(p.newOutstandingB)} (total ${formatMoney(p.newOutstanding)})`;
+      ? "<b>✓ Fully settled</b> — Outstanding row will be removed."
+      : `After update: L ${formatMoney(p.newOutstandingL)} · M ${formatMoney(
+          p.newOutstandingM
+        )} · B ${formatMoney(p.newOutstandingB)} → <b>${formatMoney(
+          p.newOutstanding
+        )}</b>`;
+
   return (
-    `Cash-in preview — seller ${p.sellerCode}\n\n` +
-    `L (CASH IN): ${formatMoney(p.lCashE)}\n` +
-    `M (CASH IN): ${formatMoney(p.mCashE)}\n` +
-    `B (CASH IN): ${formatMoney(p.bCashE)}\n` +
-    `${amtNote}: ${formatMoney(p.amountUsed)}\n` +
-    `${before}\n` +
-    `${after}\n\n` +
-    `Sales_Log rows to mark cashed: ${p.salesLogRowsToUpdate}\n` +
-    `Square_payments rows to delete: ${p.squareRowsPrimary}\n` +
-    `M Square_payments rows to delete: ${p.squareRowsM}\n\n` +
-    `Tap Confirm to apply these changes to the sheet, or Cancel.`
+    `<b>💷 Cash-in preview</b>\n` +
+    `<code>${escapeHtml(p.sellerCode)}</code>\n\n` +
+    `<b>📍 Cash-in tabs</b> <i>(column E)</i>\n` +
+    `• L — ${formatMoney(p.lCashE)}\n` +
+    `• M — ${formatMoney(p.mCashE)}\n` +
+    `• B — ${formatMoney(p.bCashE)}\n\n` +
+    `<b>💵 Settlement amount</b>\n` +
+    `${formatMoney(p.amountUsed)}\n` +
+    `${settlementNote}\n\n` +
+    `<b>📋 Outstanding — before</b>\n` +
+    `${outstandingBefore}\n\n` +
+    `<b>📌 Outstanding — after confirm</b>\n` +
+    `${outstandingAfter}\n\n` +
+    `<b>📊 Sheet updates</b>\n` +
+    `• Sales_Log rows marked cashed: <b>${String(p.salesLogRowsToUpdate)}</b> <i>(all rows for this seller)</i>\n` +
+    `• Square (primary) rows removed: <b>${String(p.squareRowsPrimary)}</b>\n` +
+    `• Square (M) rows removed: <b>${String(p.squareRowsM)}</b>\n\n` +
+    `<i>Tap ✅ Confirm to write to Google Sheets, or ❌ Cancel.</i>`
   );
 }
 
-function formatCashApplySuccess(r: SellerCashInApplyResult): string {
-  const outLine = r.outstandingRowDeleted
-    ? "Outstanding tab: row removed (fully settled)."
-    : `Outstanding tab: L ${formatMoney(r.newOutstandingL)} | M ${formatMoney(r.newOutstandingM)} | B ${formatMoney(r.newOutstandingB)} (total ${formatMoney(r.newOutstanding)})`;
+function formatCashApplySuccessHtml(r: SellerCashInApplyResult): string {
+  const outstandingBlock = r.outstandingRowDeleted
+    ? `<b>✓ Outstanding</b>\n<i>Row removed — balance cleared.</i>`
+    : `<b>📌 Outstanding remaining</b>\n` +
+      `L ${formatMoney(r.newOutstandingL)} · M ${formatMoney(
+        r.newOutstandingM
+      )} · B ${formatMoney(r.newOutstandingB)} → <b>${formatMoney(
+        r.newOutstanding
+      )}</b>`;
+
   return (
-    `Cash-in complete — seller ${r.sellerCode}\n\n` +
-    `Amount applied: ${formatMoney(r.amountUsed)}\n` +
-    `${outLine}\n` +
-    `Sales_Log rows marked cashed: ${r.salesLogRowsUpdated}\n` +
-    `Square_payments deleted: ${r.squareRowsDeletedPrimary}\n` +
-    `M Square_payments deleted: ${r.squareRowsDeletedM}`
+    `<b>✅ Cash-in recorded</b>\n` +
+    `<code>${escapeHtml(r.sellerCode)}</code>\n\n` +
+    `<b>💵 Amount applied</b>\n${formatMoney(r.amountUsed)}\n\n` +
+    `${outstandingBlock}\n\n` +
+    `<b>📊 Sheet updates</b>\n` +
+    `• Sales_Log rows set to cashed: <b>${String(r.salesLogRowsUpdated)}</b>\n` +
+    `• Square (primary) deleted: <b>${String(r.squareRowsDeletedPrimary)}</b>\n` +
+    `• Square (M) deleted: <b>${String(r.squareRowsDeletedM)}</b>`
+  );
+}
+
+function formatCashCommandUsageHtml(errorDetail: string): string {
+  return `<b>💷 Cash-in</b>\n\n${escapeHtml(errorDetail)}`;
+}
+
+function formatBreakdownUsageHtml(errorDetail: string): string {
+  return `<b>📊 Breakdown</b>\n\n${escapeHtml(errorDetail)}`;
+}
+
+function formatCashApplyErrorHtml(detail: string): string {
+  return (
+    `<b>⚠️ Cash-in could not be completed</b>\n\n${escapeHtml(detail)}\n\n` +
+    `<i>If this persists, check sheet names and bot logs.</i>`
+  );
+}
+
+function formatCashPreviewErrorHtml(detail: string): string {
+  return (
+    `<b>⚠️ Preview unavailable</b>\n\n${escapeHtml(detail)}\n\n` +
+    `<i>Verify the seller exists on L/M/B cash-in tabs.</i>`
+  );
+}
+
+function formatCashConfirmPayloadTooLongHtml(): string {
+  return (
+    `<b>⚠️ Confirm button unavailable</b>\n\n` +
+    `<i>Telegram limits button payload size. Try a shorter seller code or a simpler amount, then run /cash again.</i>`
+  );
+}
+
+function formatBalanceLoadErrorHtml(detail: string): string {
+  return (
+    `<b>⚠️ Balance unavailable</b>\n\n${escapeHtml(detail)}\n\n` +
+    `<i>Check spreadsheet access and GOOGLE_SERVICE_ACCOUNT / SPREADSHEET_ID.</i>`
+  );
+}
+
+function formatBalanceEmptyHtml(): string {
+  return (
+    `<b>📭 No balance data</b>\n\n` +
+    `<i>No sellers were found on the cash-in or Outstanding tabs yet.</i>`
+  );
+}
+
+function formatSellerNotFoundHtml(sellerCode: string): string {
+  return (
+    `<b>🔍 Seller not found</b>\n\n` +
+    `<code>${escapeHtml(sellerCode)}</code>\n\n` +
+    `<i>There is no cash-in row and no outstanding balance for this code. Check the seller ID or use </i><code>/balance</code><i> without a code to browse everyone.</i>`
+  );
+}
+
+function formatBreakdownLoadErrorHtml(detail: string): string {
+  return (
+    `<b>⚠️ Breakdown unavailable</b>\n\n${escapeHtml(detail)}\n\n` +
+    `<i>Confirm SALES_LOG_SHEET_NAME and Ticket_rules are reachable.</i>`
   );
 }
 
@@ -646,38 +802,42 @@ function formatSingleSellerBalanceHtml(input: {
   const grandTotal =
     b.sumE + m.sumE + l.sumE + outstandingL + outstandingM + outstandingB;
   const lines = [
-    "CASH IN",
+    "━━ M SHEET ━━",
+    `Collected ……… ${formatMoney(m.sumCollected)}`,
+    `Hand in ……… ${formatMoney(m.sumC)}`,
+    `Commission … ${formatMoney(m.sumCommission)}`,
+    `Card ……… ${formatMoney(m.sumD)}`,
+    `Cash in (E) … ${formatMoney(m.sumE)}`,
+    `Outstanding M … ${formatMoney(outstandingM)}`,
     "",
-    `${sellerCode} | ${email || "-"}`,
+    "━━ L SHEET ━━",
+    `Collected ……… ${formatMoney(l.sumCollected)}`,
+    `Hand in ……… ${formatMoney(l.sumC)}`,
+    `Commission … ${formatMoney(l.sumCommission)}`,
+    `Card ……… ${formatMoney(l.sumD)}`,
+    `Cash in (E) … ${formatMoney(l.sumE)}`,
+    `Outstanding L … ${formatMoney(outstandingL)}`,
     "",
-    "M SHEET",
-    `Collected: ${formatMoney(m.sumCollected)}`,
-    `Hand In:   ${formatMoney(m.sumC)}`,
-    `Commission: ${formatMoney(m.sumCommission)}`,
-    `Card:      ${formatMoney(m.sumD)}`,
-    `Cash In:   ${formatMoney(m.sumE)}`,
-    `Out M:     ${formatMoney(outstandingM)}`,
+    "━━ B SHEET ━━",
+    `Collected ……… ${formatMoney(b.sumCollected)}`,
+    `Hand in ……… ${formatMoney(b.sumC)}`,
+    `Commission … ${formatMoney(b.sumCommission)}`,
+    `Card ……… ${formatMoney(b.sumD)}`,
+    `Cash in (E) … ${formatMoney(b.sumE)}`,
+    `Outstanding B … ${formatMoney(outstandingB)}`,
     "",
-    "L SHEET",
-    `Collected: ${formatMoney(l.sumCollected)}`,
-    `Hand In:   ${formatMoney(l.sumC)}`,
-    `Commission: ${formatMoney(l.sumCommission)}`,
-    `Card:      ${formatMoney(l.sumD)}`,
-    `Cash In:   ${formatMoney(l.sumE)}`,
-    `Out L:     ${formatMoney(outstandingL)}`,
-    "",
-    "B SHEET",
-    `Collected: ${formatMoney(b.sumCollected)}`,
-    `Hand In:   ${formatMoney(b.sumC)}`,
-    `Commission: ${formatMoney(b.sumCommission)}`,
-    `Card:      ${formatMoney(b.sumD)}`,
-    `Cash In:   ${formatMoney(b.sumE)}`,
-    `Out B:     ${formatMoney(outstandingB)}`,
-    "",
-    `TOTAL: ${formatMoney(grandTotal)}`,
+    `◆ GRAND TOTAL … ${formatMoney(grandTotal)}`,
   ];
 
-  return `<pre>${escapeHtml(lines.join("\n"))}</pre>`;
+  const headline =
+    `<b>💰 Seller balance</b>\n` +
+    `<code>${escapeHtml(sellerCode)}</code>` +
+    (email.trim() !== ""
+      ? `\n📧 <code>${escapeHtml(email)}</code>`
+      : `\n<i>No email on Users sheet</i>`) +
+    `\n\n`;
+
+  return `${headline}<pre>${escapeHtml(lines.join("\n"))}</pre>`;
 }
 
 function formatAllBalancesHtml(
@@ -738,7 +898,10 @@ function formatAllBalancesHtml(
     .sort((a, b) => b.total - a.total);
 
   if (items.length === 0) {
-    return "No sellers with valid seller codes were found.";
+    return (
+      `<b>📭 No sellers listed</b>\n\n` +
+      `<i>No rows with a valid seller code were found on the cash-in tabs.</i>`
+    );
   }
 
   const widths = computeBalanceGridWidths(
@@ -764,7 +927,11 @@ function formatAllBalancesHtml(
     });
   });
 
-  return `CASH IN\n\n${sections.join("\n\n")}`;
+  return (
+    `<b>💰 Cash-in overview</b>\n` +
+    `<i>Per seller · £ cash-in E · L / M / B · outstanding · total</i>\n\n` +
+    `${sections.join("\n\n")}`
+  );
 }
 
 function truncateSellerCode(normalizedSellerCode: string): string {
@@ -807,7 +974,7 @@ function formatSellerCashSectionHtml(input: {
     `${formatMoney(input.total).padStart(input.widths.total, " ")}`;
 
   return (
-    `<u>${escapeHtml(input.title)}</u>\n` +
+    `<b>👤</b> <u>${escapeHtml(input.title)}</u>\n` +
     `<pre>${escapeHtml(header)}\n${escapeHtml(values)}</pre>`
   );
 }
@@ -838,34 +1005,45 @@ function escapeHtml(s: string): string {
     .replace(/"/g, "&quot;");
 }
 
+function formatBreakdownSummaryHtml(breakdown: SellerBreakdownResult): string {
+  const sc = escapeHtml(breakdown.sellerCode);
+  return (
+    `<b>📊 Sales breakdown</b>\n<code>${sc}</code>\n\n` +
+    `<b>📈 Uncashed sales</b>\n` +
+    `• Count — <b>${String(breakdown.saleCount)}</b>\n` +
+    `• Gross — <b>${formatMoneyCompact(breakdown.totalGross)}</b>\n` +
+    `• Commission — <b>${formatMoneyCompact(breakdown.totalCommission)}</b>\n` +
+    `• Hand-in (sheet L/M/B) — ${formatMoneyCompact(
+      breakdown.handInSheetL
+    )} / ${formatMoneyCompact(breakdown.handInSheetM)} / ${formatMoneyCompact(
+      breakdown.handInSheetB
+    )}\n` +
+    `• Hand-in total — <b>${formatMoneyCompact(breakdown.handInSheetTotal)}</b>\n\n` +
+    `<b>🏷 Cash-in tabs</b>\n` +
+    `• L — ${formatMoneyCompact(breakdown.cashInSheetL)}\n` +
+    `• M — ${formatMoneyCompact(breakdown.cashInSheetM)}\n` +
+    `• B — ${formatMoneyCompact(breakdown.cashInSheetB)}\n` +
+    `• Sum — <b>${formatMoneyCompact(breakdown.cashInSheetTotal)}</b>\n\n` +
+    `<b>💳 Card payments (Square)</b>\n` +
+    `• Primary — ${formatMoneyCompact(breakdown.cardTotalPrimary)}\n` +
+    `• M tab — ${formatMoneyCompact(breakdown.cardTotalM)}\n` +
+    `• Combined — <b>${formatMoneyCompact(breakdown.cardTotalCombined)}</b>\n\n` +
+    `<b>📌 Outstanding</b>\n` +
+    `• L — ${formatMoneyCompact(breakdown.outstandingL)}\n` +
+    `• M — ${formatMoneyCompact(breakdown.outstandingM)}\n` +
+    `• B — ${formatMoneyCompact(breakdown.outstandingB)}\n` +
+    `• Total — <b>${formatMoneyCompact(breakdown.outstandingTotal)}</b>\n\n` +
+    `<b>💵 CASH IN view</b> <i>(tabs + outstanding)</i>\n` +
+    `<b>${formatMoneyCompact(breakdown.cashInIncludingOutstanding)}</b>`
+  );
+}
+
 function formatBreakdownMessages(breakdown: SellerBreakdownResult): string[] {
-  const headerLines = [
-    `BREAKDOWN — seller ${breakdown.sellerCode}`,
-    "",
-    `Uncashed sales: ${breakdown.saleCount}`,
-    `Gross total: ${formatMoneyCompact(breakdown.totalGross)}`,
-    `Commission total: ${formatMoneyCompact(breakdown.totalCommission)}`,
-    `Hand-in (L): ${formatMoneyCompact(breakdown.handInSheetL)}`,
-    `Hand-in (M): ${formatMoneyCompact(breakdown.handInSheetM)}`,
-    `Hand-in (B): ${formatMoneyCompact(breakdown.handInSheetB)}`,
-    `Hand-in total: ${formatMoneyCompact(breakdown.handInSheetTotal)}`,
-    `Card (L): ${formatMoneyCompact(breakdown.cardTotalPrimary)}`,
-    `Card (M): ${formatMoneyCompact(breakdown.cardTotalM)}`,
-    `Card total (combined): ${formatMoneyCompact(breakdown.cardTotalCombined)}`,
-    `Outstanding (L/M/B): ${formatMoneyCompact(
-      breakdown.outstandingL
-    )} + ${formatMoneyCompact(breakdown.outstandingM)} + ${formatMoneyCompact(
-      breakdown.outstandingB
-    )} = ${formatMoneyCompact(breakdown.outstandingTotal)}`,
-    `CASH IN: ${formatMoneyCompact(breakdown.cashInIncludingOutstanding)}`,
-  ];
-  const summary = headerLines.join("\n");
+  const summaryBlock = formatBreakdownSummaryHtml(breakdown);
 
   if (breakdown.sales.length === 0) {
     return [
-      `${escapeHtml(
-        summary
-      )}\n\nAll Sales 📋 (PRICE | COMMISSION | HAND-IN | LOC)\n<pre>${escapeHtml(
+      `${summaryBlock}\n\n<b>📋 All sales</b>\n<i>Price · commission · hand-in · location</i>\n<pre>${escapeHtml(
         "No uncashed sales found for this seller."
       )}</pre>`,
     ];
@@ -877,14 +1055,15 @@ function formatBreakdownMessages(breakdown: SellerBreakdownResult): string[] {
   );
   const limit = 3800;
   const messages: string[] = [];
-  let currentSummary = `${escapeHtml(summary)}\n\nAll Sales 📋\n`;
+  let currentSummary = `${summaryBlock}\n\n<b>📋 All sales</b>\n<i>Order · qty · ticket · amounts · LOC</i>\n`;
   let currentBlock = "";
   for (const entry of entries) {
     const nextBlock = `${currentBlock}${entry}\n`;
     const nextMessage = `${currentSummary}<pre>${nextBlock.trimEnd()}</pre>`;
     if (nextMessage.length > limit && currentBlock.trim() !== "") {
       messages.push(`${currentSummary}<pre>${currentBlock.trimEnd()}</pre>`);
-      currentSummary = "All Sales 📋 (continued)\n";
+      currentSummary =
+        `<b>📋 All sales</b> <i>(continued)</i>\n<i>Order · qty · ticket · amounts · LOC</i>\n`;
       currentBlock = `${entry}\n`;
       continue;
     }
@@ -915,9 +1094,9 @@ function formatBreakdownSaleEntry(
   const name = (ticketDisplay || "-").padEnd(widths.name, " ");
   const orderNumber = String(sale.orderId ?? "").trim() || "-";
   if (sale.isCancelled) {
-    return `<b>${escapeHtml(orderNumber)}</b> ${escapeHtml(
-      `${qty} ${name} : CANCELED`
-    )}`;
+    return escapeHtml(
+      `#${orderNumber}  ${qty} ${name} : CANCELED`
+    );
   }
   const gross = formatMoneyCompact(sale.grossAmount).padStart(
     widths.gross,
@@ -934,7 +1113,7 @@ function formatBreakdownSaleEntry(
   const locRaw = sale.location.trim() === "" ? "N/A" : sale.location.trim();
   const loc = locRaw.padEnd(widths.location, " ");
   const row = `${qty} ${name} : ${gross} | ${commission} | ${handIn} | ${loc}`;
-  return `<b>${escapeHtml(orderNumber)}</b> ${escapeHtml(row)}`;
+  return escapeHtml(`#${orderNumber}  ${row}`);
 }
 
 function computeBreakdownSaleWidths(sales: SellerUncashedSaleBreakdownRow[]): {
@@ -1004,6 +1183,95 @@ function strikeThroughText(s: string): string {
   return Array.from(s)
     .map((ch) => `${ch}${overlay}`)
     .join("");
+}
+
+/** Strip buttons after successful confirm so the same preview cannot be applied twice. */
+async function telegramRemoveInlineKeyboardFromMessage(
+  token: string,
+  chatId: number,
+  messageId: number
+): Promise<void> {
+  await telegramBotApi(
+    token,
+    "editMessageReplyMarkup",
+    {
+      chat_id: chatId,
+      message_id: messageId,
+      reply_markup: { inline_keyboard: [] },
+    },
+    "[TelegramWebhook] editMessageReplyMarkup (after cash-in success)"
+  );
+}
+
+/** Remove Confirm/Cancel and show cancellation footer so Confirm cannot be used again. */
+async function telegramCancelCashPreviewMessage(
+  token: string,
+  callback: CallbackQueryExtract
+): Promise<void> {
+  const emptyKeyboard: { inline_keyboard: unknown[] } = {
+    inline_keyboard: [],
+  };
+  const footer = "\n\n<i>❌ Cancelled — cash-in was not applied.</i>";
+
+  if (callback.messageText !== undefined) {
+    let bodyText = `${callback.messageText}${footer}`;
+    if (bodyText.length > 4096) {
+      const reserve = footer.length + 5;
+      bodyText = `${callback.messageText.slice(
+        0,
+        Math.max(0, 4096 - reserve)
+      )}…${footer}`;
+    }
+    const ok = await telegramBotApi(
+      token,
+      "editMessageText",
+      {
+        chat_id: callback.chatId,
+        message_id: callback.messageId,
+        text: bodyText,
+        parse_mode: "HTML",
+        reply_markup: emptyKeyboard,
+      },
+      "[TelegramWebhook] editMessageText (cancel preview)"
+    );
+    if (ok) return;
+  }
+
+  await telegramBotApi(
+    token,
+    "editMessageReplyMarkup",
+    {
+      chat_id: callback.chatId,
+      message_id: callback.messageId,
+      reply_markup: emptyKeyboard,
+    },
+    "[TelegramWebhook] editMessageReplyMarkup (cancel preview)"
+  );
+}
+
+async function telegramBotApi(
+  token: string,
+  method: string,
+  payload: Record<string, unknown>,
+  logLabel: string
+): Promise<boolean> {
+  const url = `https://api.telegram.org/bot${encodeURIComponent(
+    token
+  )}/${method}`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const errText = await res.text();
+    console.error(
+      logLabel,
+      JSON.stringify({ status: res.status, body: errText.slice(0, 500) })
+    );
+    return false;
+  }
+  return true;
 }
 
 async function telegramAnswerCallbackQuery(

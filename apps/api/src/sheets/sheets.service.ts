@@ -1005,7 +1005,7 @@ export class SheetsService {
 
   /**
    * Telegram /cash — preview only (no writes).
-   * @param explicitAmount `undefined` = use L + M + B CASH IN totals; otherwise use this hand-in amount.
+   * @param explicitAmount `undefined` = full settlement: L + M + B CASH IN + current Outstanding total; otherwise use this hand-in amount.
    */
   async previewSellerCashInFromSheets(
     sellerCode: string,
@@ -1013,8 +1013,9 @@ export class SheetsService {
   ): Promise<SellerCashInPreview> {
     const ctx = await this.loadCashInContextForSeller(sellerCode);
     const amountWasAuto = explicitAmount === undefined;
+    const cashInSum = ctx.lCashE + ctx.mCashE + ctx.bCashE;
     const amountUsed = amountWasAuto
-      ? ctx.lCashE + ctx.mCashE + ctx.bCashE
+      ? cashInSum + ctx.currentOutstanding
       : explicitAmount;
     if (!Number.isFinite(amountUsed)) {
       throw new Error("Amount is not a valid number.");
@@ -1057,7 +1058,7 @@ export class SheetsService {
 
   /**
    * Telegram /cash — apply after user confirms. Re-reads sheet values at execution time.
-   * @param explicitAmount `undefined` = auto (L + M + B CASH IN); else use this amount.
+   * @param explicitAmount `undefined` = full settlement (L + M + B CASH IN + Outstanding); else use this amount.
    */
   async applySellerCashInFromSheets(
     sellerCode: string,
@@ -1070,9 +1071,10 @@ export class SheetsService {
     }
 
     const ctx = await this.loadCashInContextForSeller(sellerCode);
+    const cashInSum = ctx.lCashE + ctx.mCashE + ctx.bCashE;
     const amountUsed =
       explicitAmount === undefined
-        ? ctx.lCashE + ctx.mCashE + ctx.bCashE
+        ? cashInSum + ctx.currentOutstanding
         : explicitAmount;
     if (!Number.isFinite(amountUsed)) {
       throw new Error("Amount is not a valid number.");
@@ -1372,7 +1374,6 @@ export class SheetsService {
       const row = values[i] ?? [];
       const rowSeller = normalizeCashInSellerDigits(String(row[sellerIdx] ?? ""));
       if (rowSeller !== sellerCode) continue;
-      if (isTruthySheetCell(row[cashedIdx])) continue;
       const rowNumber = i + 1;
       const col = toA1Column(cashedIdx + 1);
       updates.push({
@@ -2256,26 +2257,23 @@ function isCancelledOrderStatus(status: string): boolean {
   return normalized === "cancelled" || normalized === "canceled";
 }
 
+/** Rows in Sales_Log for this seller (used for /cash preview count; apply marks every such row cashed). */
 function countSalesLogRowsForSeller(
   values: unknown[][],
   sellerCode: string,
-  cashedColumnHeader: string
+  _cashedColumnHeader: string
 ): number {
   if (values.length < 2) return 0;
   const header = values[0]?.map((v) => String(v).trim()) ?? [];
   const sellerIdx = header.findIndex(
     (h) => normSheetHeader(h) === "seller_code"
   );
-  const cashedIdx = header.findIndex(
-    (h) => normSheetHeader(h) === normSheetHeader(cashedColumnHeader)
-  );
-  if (sellerIdx < 0 || cashedIdx < 0) return 0;
+  if (sellerIdx < 0) return 0;
   let n = 0;
   for (let i = 1; i < values.length; i++) {
     const row = values[i] ?? [];
     const rowSeller = normalizeCashInSellerDigits(String(row[sellerIdx] ?? ""));
     if (rowSeller !== sellerCode) continue;
-    if (isTruthySheetCell(row[cashedIdx])) continue;
     n += 1;
   }
   return n;
