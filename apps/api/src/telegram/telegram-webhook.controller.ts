@@ -809,22 +809,18 @@ function formatUpdateSquareIdsSuccessMessages(result: {
     ];
   }
 
-  const widths = computeInsertedSquareTeamRowWidths(result.insertedRows);
-  const entries = result.insertedRows.map((row) =>
-    formatInsertedSquareTeamRow(row, widths)
-  );
+  const entries = result.insertedRows.map((row) => escapeHtml(row.email));
   const limit = 3800;
   const messages: string[] = [];
   let currentSummary =
-    `${summary}\n\n<b>📋 New rows inserted are as follows:</b>\n<i>Email · TH · M</i>\n`;
+    `${summary}\n\n<b>📋 New rows inserted are as follows:</b>\n`;
   let currentBlock = "";
   for (const entry of entries) {
     const nextBlock = `${currentBlock}${entry}\n`;
     const nextMessage = `${currentSummary}<pre>${nextBlock.trimEnd()}</pre>`;
     if (nextMessage.length > limit && currentBlock.trim() !== "") {
       messages.push(`${currentSummary}<pre>${currentBlock.trimEnd()}</pre>`);
-      currentSummary =
-        `<b>📋 New rows inserted</b> <i>(continued)</i>\n<i>Email · TH · M</i>\n`;
+      currentSummary = `<b>📋 New rows inserted</b> <i>(continued)</i>\n`;
       currentBlock = `${entry}\n`;
       continue;
     }
@@ -834,37 +830,6 @@ function formatUpdateSquareIdsSuccessMessages(result: {
     messages.push(`${currentSummary}<pre>${currentBlock.trimEnd()}</pre>`);
   }
   return messages;
-}
-
-function formatSquareTeamIdCell(id: string): string {
-  const s = id.trim();
-  return s === "" ? "—" : s;
-}
-
-function formatInsertedSquareTeamRow(
-  row: { email: string; th: string; m: string },
-  widths: { email: number; th: number; m: number }
-): string {
-  const email = row.email.padEnd(widths.email, " ");
-  const th = formatSquareTeamIdCell(row.th).padStart(widths.th, " ");
-  const m = formatSquareTeamIdCell(row.m).padStart(widths.m, " ");
-  return escapeHtml(`${email}  ${th}  ${m}`);
-}
-
-function computeInsertedSquareTeamRowWidths(
-  rows: Array<{ email: string; th: string; m: string }>
-): { email: number; th: number; m: number } {
-  return {
-    email: Math.max("Email".length, ...rows.map((row) => row.email.length)),
-    th: Math.max(
-      "TH".length,
-      ...rows.map((row) => formatSquareTeamIdCell(row.th).length)
-    ),
-    m: Math.max(
-      "M".length,
-      ...rows.map((row) => formatSquareTeamIdCell(row.m).length)
-    ),
-  };
 }
 
 function formatCashApplyErrorHtml(detail: string): string {
