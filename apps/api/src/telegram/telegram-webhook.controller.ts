@@ -19,6 +19,7 @@ import type {
   SellerUncashedSaleBreakdownRow,
 } from "../sheets/sheets.service";
 import { SheetsService } from "../sheets/sheets.service";
+import { SquareOAuthService } from "../square-oauth/square-oauth.service";
 
 /** HTML body for /help (parse_mode HTML). */
 function formatHelpMessageHtml(): string {
@@ -30,6 +31,8 @@ function formatHelpMessageHtml(): string {
     `<i>Record a cash-in: marks every Sales_Log row for that seller as cashed, updates Outstanding, and clears matching Square rows when applicable. Without an amount, settlement = L+M+B cash-in plus full outstanding.</i>\n\n` +
     `<b>📊 /breakdown</b> <code>&lt;seller_code&gt;</code>\n` +
     `<i>Uncashed sales detail, commissions, hand-in vs cards, and location.</i>\n\n` +
+    `<b>🔄 /updatesquareids</b>\n` +
+    `<i>Refresh the Square Team sheet (Email, TH, M) from both Square accounts.</i>\n\n` +
     `<b>❔ /help</b>\n` +
     `<i>Show this message.</i>`
   );
@@ -54,7 +57,8 @@ const cancelledCashPreviewMessageKeys = new Set<string>();
 export class TelegramWebhookController {
   constructor(
     private readonly config: ConfigService,
-    private readonly sheetsService: SheetsService
+    private readonly sheetsService: SheetsService,
+    private readonly squareOAuthService: SquareOAuthService
   ) {}
 
   @Post("webhook")
@@ -147,6 +151,20 @@ export class TelegramWebhookController {
         chatId,
         breakdownParsed.sellerCode
       );
+      return { ok: true };
+    }
+
+    const updateSquareIdsParsed = parseUpdateSquareIdsCommand(text);
+    if (updateSquareIdsParsed != null) {
+      if (!updateSquareIdsParsed.ok) {
+        await telegramSendMessage(token, {
+          chat_id: chatId,
+          text: formatUpdateSquareIdsUsageHtml(updateSquareIdsParsed.error),
+          parse_mode: "HTML",
+        });
+        return { ok: true };
+      }
+      await this.handleUpdateSquareIdsCommand(token, chatId);
       return { ok: true };
     }
 
@@ -454,6 +472,39 @@ export class TelegramWebhookController {
       });
     }
   }
+
+  private async handleUpdateSquareIdsCommand(
+    token: string,
+    chatId: number
+  ): Promise<void> {
+    let result: Awaited<
+      ReturnType<SquareOAuthService["syncSquareTeamSheetToSpreadsheet"]>
+    >;
+    try {
+      result = await this.squareOAuthService.syncSquareTeamSheetToSpreadsheet();
+    } catch (err: unknown) {
+      const msg =
+        err instanceof Error
+          ? err.message
+          : "Unknown error syncing Square team ids.";
+      console.error("[TelegramWebhook] /updatesquareids error", msg);
+      await telegramSendMessage(token, {
+        chat_id: chatId,
+        text: formatUpdateSquareIdsErrorHtml(msg),
+        parse_mode: "HTML",
+      });
+      return;
+    }
+
+    const messages = formatUpdateSquareIdsSuccessMessages(result);
+    for (const text of messages) {
+      await telegramSendMessage(token, {
+        chat_id: chatId,
+        text,
+        parse_mode: "HTML",
+      });
+    }
+  }
 }
 
 type CallbackQueryExtract = {
@@ -573,6 +624,27 @@ function parseBreakdownCommand(text: string): BreakdownParseResult | null {
   return { ok: true, sellerCode: normalizeSellerCode(sellerRaw) };
 }
 
+type UpdateSquareIdsParseResult = { ok: true } | { ok: false; error: string };
+
+function parseUpdateSquareIdsCommand(
+  text: string
+): UpdateSquareIdsParseResult | null {
+  const trimmed = text.trim();
+  if (trimmed === "") return null;
+  const parts = trimmed.split(/\s+/);
+  const command = parts[0] ?? "";
+  if (!/^\/updatesquareids(@\w+)?$/i.test(command)) {
+    return null;
+  }
+  if (parts.length > 1) {
+    return {
+      ok: false,
+      error: "This command takes no arguments. Send /updatesquareids only.",
+    };
+  }
+  return { ok: true };
+}
+
 function buildCashConfirmCallbackData(
   sellerCode: string,
   explicitAmount?: number
@@ -685,6 +757,116 @@ function formatBreakdownUsageHtml(errorDetail: string): string {
   return `<b>📊 Breakdown</b>\n\n${escapeHtml(errorDetail)}`;
 }
 
+function formatUpdateSquareIdsUsageHtml(errorDetail: string): string {
+  return `<b>🔄 Square Team sync</b>\n\n${escapeHtml(errorDetail)}`;
+}
+
+function formatUpdateSquareIdsErrorHtml(detail: string): string {
+  return (
+    `<b>⚠️ Square Team sync failed</b>\n\n${escapeHtml(detail)}\n\n` +
+    `<i>Check Square OAuth tokens for both merchants and spreadsheet access.</i>`
+  );
+}
+
+function formatUpdateSquareIdsSuccessMessages(result: {
+  primaryTeamMembersFetched: number;
+  mTeamMembersFetched: number;
+  rowsWritten: number;
+  withTh: number;
+  withM: number;
+  withBoth: number;
+  insertedRows: Array<{ email: string; th: string; m: string }>;
+  primaryFetchError?: string;
+  mFetchError?: string;
+}): string[] {
+  const primaryWarning =
+    result.primaryFetchError != null
+      ? `\n\n<b>⚠️ Primary account</b>\n<i>${escapeHtml(
+          result.primaryFetchError
+        )}</i>`
+      : "";
+  const mWarning =
+    result.mFetchError != null
+      ? `\n\n<b>⚠️ M account</b>\n<i>${escapeHtml(result.mFetchError)}</i>`
+      : "";
+
+  const summary =
+    `<b>✅ Square team updated</b>\n\n` +
+    `<b>📥 Square team members fetched</b>\n` +
+    `• Primary (TH) — <b>${String(result.primaryTeamMembersFetched)}</b>\n` +
+    `• M — <b>${String(result.mTeamMembersFetched)}</b>\n\n` +
+    `<b>📊 Square Team tab</b>\n` +
+    `• Rows on sheet — <b>${String(result.rowsWritten)}</b>\n` +
+    `• With TH — <b>${String(result.withTh)}</b>\n` +
+    `• With M — <b>${String(result.withM)}</b>\n` +
+    `• With both — <b>${String(result.withBoth)}</b>` +
+    primaryWarning +
+    mWarning;
+
+  if (result.insertedRows.length === 0) {
+    return [
+      `${summary}\n\n<b>📋 New rows inserted</b>\n<i>No new emails — existing rows were updated only.</i>`,
+    ];
+  }
+
+  const widths = computeInsertedSquareTeamRowWidths(result.insertedRows);
+  const entries = result.insertedRows.map((row) =>
+    formatInsertedSquareTeamRow(row, widths)
+  );
+  const limit = 3800;
+  const messages: string[] = [];
+  let currentSummary =
+    `${summary}\n\n<b>📋 New rows inserted are as follows:</b>\n<i>Email · TH · M</i>\n`;
+  let currentBlock = "";
+  for (const entry of entries) {
+    const nextBlock = `${currentBlock}${entry}\n`;
+    const nextMessage = `${currentSummary}<pre>${nextBlock.trimEnd()}</pre>`;
+    if (nextMessage.length > limit && currentBlock.trim() !== "") {
+      messages.push(`${currentSummary}<pre>${currentBlock.trimEnd()}</pre>`);
+      currentSummary =
+        `<b>📋 New rows inserted</b> <i>(continued)</i>\n<i>Email · TH · M</i>\n`;
+      currentBlock = `${entry}\n`;
+      continue;
+    }
+    currentBlock = nextBlock;
+  }
+  if (currentBlock.trim() !== "") {
+    messages.push(`${currentSummary}<pre>${currentBlock.trimEnd()}</pre>`);
+  }
+  return messages;
+}
+
+function formatSquareTeamIdCell(id: string): string {
+  const s = id.trim();
+  return s === "" ? "—" : s;
+}
+
+function formatInsertedSquareTeamRow(
+  row: { email: string; th: string; m: string },
+  widths: { email: number; th: number; m: number }
+): string {
+  const email = row.email.padEnd(widths.email, " ");
+  const th = formatSquareTeamIdCell(row.th).padStart(widths.th, " ");
+  const m = formatSquareTeamIdCell(row.m).padStart(widths.m, " ");
+  return escapeHtml(`${email}  ${th}  ${m}`);
+}
+
+function computeInsertedSquareTeamRowWidths(
+  rows: Array<{ email: string; th: string; m: string }>
+): { email: number; th: number; m: number } {
+  return {
+    email: Math.max("Email".length, ...rows.map((row) => row.email.length)),
+    th: Math.max(
+      "TH".length,
+      ...rows.map((row) => formatSquareTeamIdCell(row.th).length)
+    ),
+    m: Math.max(
+      "M".length,
+      ...rows.map((row) => formatSquareTeamIdCell(row.m).length)
+    ),
+  };
+}
+
 function formatCashApplyErrorHtml(detail: string): string {
   return (
     `<b>⚠️ Cash-in could not be completed</b>\n\n${escapeHtml(detail)}\n\n` +
@@ -787,6 +969,19 @@ function formatMoney(n: number): string {
   });
 }
 
+/** One monospace row: label left-padded column + gap + right-aligned amount. */
+function formatBalanceLabelAmountLine(
+  label: string,
+  amountFormatted: string,
+  labelColumnWidth: number,
+  amountColumnWidth: number
+): string {
+  return `${label.padEnd(labelColumnWidth, " ")}  ${amountFormatted.padStart(
+    amountColumnWidth,
+    " "
+  )}`;
+}
+
 function formatSingleSellerBalanceHtml(input: {
   sellerCode: string;
   email: string;
@@ -801,33 +996,76 @@ function formatSingleSellerBalanceHtml(input: {
     input;
   const grandTotal =
     b.sumE + m.sumE + l.sumE + outstandingL + outstandingM + outstandingB;
-  const lines = [
-    "━━ M SHEET ━━",
-    `Collected ……… ${formatMoney(m.sumCollected)}`,
-    `Hand in ……… ${formatMoney(m.sumC)}`,
-    `Commission … ${formatMoney(m.sumCommission)}`,
-    `Card ……… ${formatMoney(m.sumD)}`,
-    `Cash in (E) … ${formatMoney(m.sumE)}`,
-    `Outstanding M … ${formatMoney(outstandingM)}`,
-    "",
-    "━━ L SHEET ━━",
-    `Collected ……… ${formatMoney(l.sumCollected)}`,
-    `Hand in ……… ${formatMoney(l.sumC)}`,
-    `Commission … ${formatMoney(l.sumCommission)}`,
-    `Card ……… ${formatMoney(l.sumD)}`,
-    `Cash in (E) … ${formatMoney(l.sumE)}`,
-    `Outstanding L … ${formatMoney(outstandingL)}`,
-    "",
-    "━━ B SHEET ━━",
-    `Collected ……… ${formatMoney(b.sumCollected)}`,
-    `Hand in ……… ${formatMoney(b.sumC)}`,
-    `Commission … ${formatMoney(b.sumCommission)}`,
-    `Card ……… ${formatMoney(b.sumD)}`,
-    `Cash in (E) … ${formatMoney(b.sumE)}`,
-    `Outstanding B … ${formatMoney(outstandingB)}`,
-    "",
-    `◆ GRAND TOTAL … ${formatMoney(grandTotal)}`,
+
+  type RowDef = { label: string; value: number };
+  const mRows: RowDef[] = [
+    { label: "Collected", value: m.sumCollected },
+    { label: "Hand in", value: m.sumC },
+    { label: "Commission", value: m.sumCommission },
+    { label: "Card", value: m.sumD },
+    { label: "Cash in (E)", value: m.sumE },
+    { label: "Outstanding M", value: outstandingM },
   ];
+  const lRows: RowDef[] = [
+    { label: "Collected", value: l.sumCollected },
+    { label: "Hand in", value: l.sumC },
+    { label: "Commission", value: l.sumCommission },
+    { label: "Card", value: l.sumD },
+    { label: "Cash in (E)", value: l.sumE },
+    { label: "Outstanding L", value: outstandingL },
+  ];
+  const bRows: RowDef[] = [
+    { label: "Collected", value: b.sumCollected },
+    { label: "Hand in", value: b.sumC },
+    { label: "Commission", value: b.sumCommission },
+    { label: "Card", value: b.sumD },
+    { label: "Cash in (E)", value: b.sumE },
+    { label: "Outstanding B", value: outstandingB },
+  ];
+  const allRows = [...mRows, ...lRows, ...bRows];
+  const totalLabel = "◆ GRAND TOTAL";
+  const labelColumnWidth = Math.max(
+    totalLabel.length,
+    ...allRows.map((r) => r.label.length)
+  );
+  const amountStrings = [
+    ...allRows.map((r) => formatMoney(r.value)),
+    formatMoney(grandTotal),
+  ];
+  const amountColumnWidth = Math.max(
+    ...amountStrings.map((s) => s.length),
+    1
+  );
+
+  const lines: string[] = [];
+  const pushSection = (heading: string, rows: RowDef[]): void => {
+    lines.push(heading);
+    for (const row of rows) {
+      lines.push(
+        formatBalanceLabelAmountLine(
+          row.label,
+          formatMoney(row.value),
+          labelColumnWidth,
+          amountColumnWidth
+        )
+      );
+    }
+  };
+
+  pushSection("━━ M SHEET ━━", mRows);
+  lines.push("");
+  pushSection("━━ L SHEET ━━", lRows);
+  lines.push("");
+  pushSection("━━ B SHEET ━━", bRows);
+  lines.push("");
+  lines.push(
+    formatBalanceLabelAmountLine(
+      totalLabel,
+      formatMoney(grandTotal),
+      labelColumnWidth,
+      amountColumnWidth
+    )
+  );
 
   const headline =
     `<b>💰 Seller balance</b>\n` +

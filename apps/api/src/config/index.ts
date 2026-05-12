@@ -63,6 +63,8 @@ export const config = () => ({
    * team_member_id to the team columns and write user_id as Seller ID on payment rows.
    */
   squareIdsSheetName: (process.env.SQUARE_IDS_SHEET_NAME ?? "Square IDs").trim(),
+  /** Square Team tab: Email, TH (primary team id), M (mansion team id). */
+  squareTeamSheetName: (process.env.SQUARE_TEAM_SHEET_NAME ?? "Square Team").trim(),
   usersSheetSyncSecret: (process.env.USERS_SHEET_SYNC_SECRET ?? "").trim(),
   telegramBotToken: (process.env.TELEGRAM_BOT_TOKEN ?? "").trim(),
   /** If set, webhook requests must send X-Telegram-Bot-Api-Secret-Token matching this value. */

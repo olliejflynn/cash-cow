@@ -350,4 +350,84 @@ export class SquareOAuthService {
       updatedSellers,
     };
   }
+
+  /**
+   * Pull team member ids from primary + M Square accounts and upsert the Square Team sheet tab.
+   */
+  async syncSquareTeamSheetToSpreadsheet(): Promise<{
+    primaryTeamMembersFetched: number;
+    mTeamMembersFetched: number;
+    rowsWritten: number;
+    withTh: number;
+    withM: number;
+    withBoth: number;
+    insertedRows: Array<{ email: string; th: string; m: string }>;
+    primaryFetchError?: string;
+    mFetchError?: string;
+  }> {
+    let primaryTeamMembersFetched = 0;
+    let primaryTeamIdByEmail = new Map<string, string>();
+    let primaryEmailByKey = new Map<string, string>();
+    let primaryError: string | undefined;
+
+    try {
+      const primary = await this.fetchTeamMemberIdByEmailMap("primary");
+      primaryTeamMembersFetched = primary.fetchedTeamMembers;
+      primaryTeamIdByEmail = primary.teamIdByEmail;
+      primaryEmailByKey = this.buildSquareTeamEmailByKey(primary.staffInOrder);
+    } catch (err: unknown) {
+      primaryError =
+        err instanceof Error ? err.message : "Primary Square team fetch failed.";
+    }
+
+    let mTeamMembersFetched = 0;
+    let mTeamIdByEmail = new Map<string, string>();
+    let mEmailByKey = new Map<string, string>();
+    let mFetchError: string | undefined;
+
+    try {
+      const m = await this.fetchTeamMemberIdByEmailMap("m");
+      mTeamMembersFetched = m.fetchedTeamMembers;
+      mTeamIdByEmail = m.teamIdByEmail;
+      mEmailByKey = this.buildSquareTeamEmailByKey(m.staffInOrder);
+    } catch (err: unknown) {
+      mFetchError =
+        err instanceof Error ? err.message : "M Square team fetch failed.";
+    }
+
+    if (primaryError != null && mFetchError != null) {
+      throw new Error(
+        `Could not load team members from either Square account.\nPrimary: ${primaryError}\nM: ${mFetchError}`
+      );
+    }
+
+    const sheetResult =
+      await this.sheetsService.upsertSquareTeamSheetFromSquareAccounts({
+        primaryTeamIdByEmail,
+        primaryEmailByKey,
+        mTeamIdByEmail,
+        mEmailByKey,
+      });
+
+    return {
+      primaryTeamMembersFetched,
+      mTeamMembersFetched,
+      ...sheetResult,
+      ...(primaryError != null ? { primaryFetchError: primaryError } : {}),
+      ...(mFetchError != null ? { mFetchError } : {}),
+    };
+  }
+
+  private buildSquareTeamEmailByKey(
+    staffInOrder: Array<{ teamId: string; email: string }>
+  ): Map<string, string> {
+    const out = new Map<string, string>();
+    for (const row of staffInOrder) {
+      const email = row.email.trim();
+      const emailKey = email.toLowerCase();
+      if (emailKey === "" || emailKey === "(no email)") continue;
+      out.set(emailKey, email);
+    }
+    return out;
+  }
 }

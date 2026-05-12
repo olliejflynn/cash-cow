@@ -175,6 +175,7 @@ export class SheetsService {
   private readonly pendingSquarePaymentKeys = new Set<string>();
   private sellersSheetName: string = "Sellers";
   private squareIdsSheetName: string = "Square IDs";
+  private squareTeamSheetName: string = "Square Team";
   private usersSheetName: string = "users";
   private lCashInSheetName: string = "L CASH IN 🍻";
   private mCashInSheetName: string = "M CASH IN 👑";
@@ -195,6 +196,8 @@ export class SheetsService {
     this.sellersSheetName = "Sellers";
     this.squareIdsSheetName =
       this.config.get<string>("squareIdsSheetName") ?? "Square IDs";
+    this.squareTeamSheetName =
+      this.config.get<string>("squareTeamSheetName") ?? "Square Team";
     this.usersSheetName = this.config.get<string>("usersSheetName") ?? "users";
     this.lCashInSheetName =
       this.config.get<string>("lCashInSheetName") ?? "L CASH IN 🍻";
@@ -1665,10 +1668,229 @@ export class SheetsService {
       })
     );
   }
+
+  /**
+   * Upsert Square Team tab (Email, TH, M) from both Square accounts.
+   * Email is the merge key (case-insensitive); TH/M from each account override that column only.
+   */
+  async upsertSquareTeamSheetFromSquareAccounts(input: {
+    primaryTeamIdByEmail: ReadonlyMap<string, string>;
+    primaryEmailByKey: ReadonlyMap<string, string>;
+    mTeamIdByEmail: ReadonlyMap<string, string>;
+    mEmailByKey: ReadonlyMap<string, string>;
+  }): Promise<{
+    rowsWritten: number;
+    withTh: number;
+    withM: number;
+    withBoth: number;
+    insertedRows: Array<{ email: string; th: string; m: string }>;
+  }> {
+    const client = await this.getSheetsClient();
+    const spreadsheetId = this.spreadsheetId.trim();
+    if (spreadsheetId === "") {
+      throw new Error("SPREADSHEET_ID is not set");
+    }
+
+    const wanted = this.squareTeamSheetName.trim();
+    if (wanted === "") {
+      throw new Error("SQUARE_TEAM_SHEET_NAME is empty");
+    }
+
+    const meta = await client.spreadsheets.get({
+      spreadsheetId,
+      fields: "sheets.properties",
+    });
+    const sheetsList = meta.data.sheets ?? [];
+    const wantedLower = wanted.toLowerCase();
+    let sheetTitleForRange =
+      sheetsList
+        .map((s) => s.properties?.title)
+        .find((t) => t != null && t.trim().toLowerCase() === wantedLower) ?? null;
+
+    if (sheetTitleForRange == null) {
+      try {
+        await client.spreadsheets.batchUpdate({
+          spreadsheetId,
+          requestBody: {
+            requests: [
+              {
+                addSheet: {
+                  properties: { title: wanted },
+                },
+              },
+            ],
+          },
+        });
+        sheetTitleForRange = wanted;
+      } catch (err: unknown) {
+        const msg =
+          err &&
+          typeof err === "object" &&
+          "message" in err &&
+          typeof (err as { message: unknown }).message === "string"
+            ? (err as { message: string }).message
+            : String(err);
+        if (
+          msg.includes("already exists") ||
+          msg.includes("Duplicate") ||
+          msg.includes("duplicate")
+        ) {
+          const meta2 = await client.spreadsheets.get({
+            spreadsheetId,
+            fields: "sheets.properties",
+          });
+          sheetTitleForRange =
+            (meta2.data.sheets ?? [])
+              .map((s) => s.properties?.title)
+              .find((t) => t != null && t.trim().toLowerCase() === wantedLower) ??
+            wanted;
+        } else {
+          throw err;
+        }
+      }
+    }
+
+    const rangePrefix = a1SheetRangePrefix(sheetTitleForRange);
+    const readRes = await client.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${rangePrefix}A:C`,
+    });
+    const existing = parseSquareTeamSheetRows(readRes.data.values ?? []);
+    const existingEmailKeys = new Set(existing.map((row) => row.emailKey));
+
+    const merged = new Map<string, { email: string; th: string; m: string }>();
+    for (const row of existing) {
+      merged.set(row.emailKey, {
+        email: row.email,
+        th: row.th,
+        m: row.m,
+      });
+    }
+
+    const applyAccountTeamIds = (
+      teamIdByEmail: ReadonlyMap<string, string>,
+      emailByKey: ReadonlyMap<string, string>,
+      column: "th" | "m"
+    ): void => {
+      for (const [emailKey, teamId] of teamIdByEmail) {
+        const displayEmail =
+          emailByKey.get(emailKey) ?? merged.get(emailKey)?.email ?? emailKey;
+        const cur = merged.get(emailKey) ?? {
+          email: displayEmail,
+          th: "",
+          m: "",
+        };
+        if (cur.email.trim() === "") {
+          cur.email = displayEmail;
+        }
+        cur[column] = teamId;
+        merged.set(emailKey, cur);
+      }
+    };
+
+    applyAccountTeamIds(
+      input.primaryTeamIdByEmail,
+      input.primaryEmailByKey,
+      "th"
+    );
+    applyAccountTeamIds(input.mTeamIdByEmail, input.mEmailByKey, "m");
+
+    const insertedRows = [...merged.entries()]
+      .filter(([emailKey]) => !existingEmailKeys.has(emailKey))
+      .map(([, row]) => ({
+        email: row.email,
+        th: row.th,
+        m: row.m,
+      }))
+      .sort((a, b) =>
+        a.email.localeCompare(b.email, "en", { sensitivity: "base" })
+      );
+
+    const headers = ["Email", "TH", "M"];
+    const dataRows = [...merged.values()]
+      .sort((a, b) =>
+        a.email.localeCompare(b.email, "en", { sensitivity: "base" })
+      )
+      .map((row) => [row.email, row.th, row.m]);
+    const values = [headers, ...dataRows];
+
+    const clearRange = `${rangePrefix}A:C`;
+    await client.spreadsheets.values.clear({
+      spreadsheetId,
+      range: clearRange,
+    });
+
+    const updateRange = `${rangePrefix}A1:C${values.length}`;
+    await client.spreadsheets.values.update({
+      spreadsheetId,
+      range: updateRange,
+      valueInputOption: "USER_ENTERED",
+      requestBody: { values },
+    });
+
+    let withTh = 0;
+    let withM = 0;
+    let withBoth = 0;
+    for (const row of merged.values()) {
+      const hasTh = row.th.trim() !== "";
+      const hasM = row.m.trim() !== "";
+      if (hasTh) withTh += 1;
+      if (hasM) withM += 1;
+      if (hasTh && hasM) withBoth += 1;
+    }
+
+    return {
+      rowsWritten: dataRows.length,
+      withTh,
+      withM,
+      withBoth,
+      insertedRows,
+    };
+  }
 }
 
 function normSheetHeader(h: string): string {
   return h.trim().toLowerCase().replace(/\s+/g, "_");
+}
+
+function parseSquareTeamSheetRows(values: unknown[][]): Array<{
+  emailKey: string;
+  email: string;
+  th: string;
+  m: string;
+}> {
+  if (values.length === 0) return [];
+  const headerRaw = values[0] ?? [];
+  const header = headerRaw.map((c) => normSheetHeader(String(c ?? "")));
+  const emailIdx = header.findIndex((h) => h === "email");
+  const thIdx = header.findIndex((h) => h === "th");
+  const mIdx = header.findIndex((h) => h === "m");
+  const idxEmail = emailIdx >= 0 ? emailIdx : 0;
+  const idxTh = thIdx >= 0 ? thIdx : 1;
+  const idxM = mIdx >= 0 ? mIdx : 2;
+
+  const out: Array<{
+    emailKey: string;
+    email: string;
+    th: string;
+    m: string;
+  }> = [];
+  const seen = new Set<string>();
+  for (let i = 1; i < values.length; i++) {
+    const row = values[i] ?? [];
+    const email = String(row[idxEmail] ?? "").trim();
+    if (email === "") continue;
+    const emailKey = email.toLowerCase();
+    if (seen.has(emailKey)) continue;
+    seen.add(emailKey);
+    out.push({
+      emailKey,
+      email,
+      th: String(row[idxTh] ?? "").trim(),
+      m: String(row[idxM] ?? "").trim(),
+    });
+  }
+  return out;
 }
 
 /** Digits-only seller key for matching across tabs (Telegram /cash, /balance). */
