@@ -8,11 +8,16 @@ export interface OrderToSalesLogOptions {
   commissionBySlug: ReadonlyMap<string, number>;
   /** Ticket_type_Slug → H Commission when Location is H (only keys with a numeric H cell) */
   hCommissionBySlug: ReadonlyMap<string, number>;
+  /** Ticket_type_Slug → D Commission for Users tab "Dales Team" sellers */
+  dCommissionBySlug: ReadonlyMap<string, number>;
+  /** Normalized seller codes (digits from `user_id`) in the Dales Team column */
+  dalesTeamSellerCodes: ReadonlySet<string>;
 }
 
 /**
  * Map a WooCommerce order to one or more Sales_Log rows (one per line item).
- * Commission per unit comes from `commissionBySlug` (and `hCommissionBySlug` when Location is H).
+ * Commission per unit comes from `commissionBySlug`, `hCommissionBySlug` (Location H),
+ * or `dCommissionBySlug` when the seller is on Dales Team.
  */
 export function orderToSalesLogRows(
   order: WooCommerceOrderDto,
@@ -22,7 +27,10 @@ export function orderToSalesLogRows(
   const orderCreatedAt = order.date_created ?? now;
   const orderId = String(order.id);
   const sellerCode = deriveSellerCode(order, options.defaultSellerCode);
-  const { commissionBySlug, hCommissionBySlug } = options;
+  const isDalesTeamSeller = options.dalesTeamSellerCodes.has(
+    normalizeSellerCodeDigits(sellerCode)
+  );
+  const { commissionBySlug, hCommissionBySlug, dCommissionBySlug } = options;
 
   return (order.line_items ?? []).map((item) => {
     const qty = Number(item.quantity) || 1;
@@ -36,9 +44,13 @@ export function orderToSalesLogRows(
     const unitCommission =
       slug === ""
         ? 0
-        : isLocationH(location) && hCommissionBySlug.has(slug)
-          ? (hCommissionBySlug.get(slug) ?? 0)
-          : baseCommission;
+        : isDalesTeamSeller
+          ? dCommissionBySlug.has(slug)
+            ? (dCommissionBySlug.get(slug) ?? 0)
+            : baseCommission
+          : isLocationH(location) && hCommissionBySlug.has(slug)
+            ? (hCommissionBySlug.get(slug) ?? 0)
+            : baseCommission;
     if (slug !== "" && !commissionBySlug.has(slug)) {
       console.warn(
         `[orderToSalesLogRows] No Ticket_rules row for ticket_type slug=${JSON.stringify(slug)} order_id=${orderId}`
@@ -169,6 +181,10 @@ function getSaleLocationLetter(
 
 function isLocationH(location: string): boolean {
   return location.trim().toUpperCase() === "H";
+}
+
+function normalizeSellerCodeDigits(value: string): string {
+  return String(value ?? "").replace(/\D/g, "");
 }
 
 function deriveSellerCode(

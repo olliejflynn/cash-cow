@@ -240,12 +240,13 @@ export class SheetsService {
   }
 
   /**
-   * Load Ticket_rules: base commission per slug and optional H-location overrides (H Commission column).
+   * Load Ticket_rules: base commission per slug and optional H- and Dales-team overrides.
    * First data row wins for duplicate slugs.
    */
   async getTicketCommissionMaps(): Promise<{
     commissionBySlug: ReadonlyMap<string, number>;
     hCommissionBySlug: ReadonlyMap<string, number>;
+    dCommissionBySlug: ReadonlyMap<string, number>;
   }> {
     const client = await this.getSheetsClient();
     const response = await client.spreadsheets.values.get({
@@ -254,6 +255,28 @@ export class SheetsService {
     });
     const rows = response.data.values ?? [];
     return parseTicketCommissionMaps(rows);
+  }
+
+  /** Seller codes (digits from `user_id`) marked TRUE in the Users tab "Dales Team" column. */
+  async getDalesTeamSellerCodes(): Promise<Set<string>> {
+    const client = await this.getSheetsClient();
+    const spreadsheetId = this.spreadsheetId.trim();
+    if (spreadsheetId === "") {
+      throw new Error("SPREADSHEET_ID is not set");
+    }
+    const title = await this.resolveSheetTitleForConfiguredTab(
+      client,
+      spreadsheetId,
+      this.usersSheetName,
+      "Check USERS_SHEET_NAME."
+    );
+    const range = `${a1SheetRangePrefix(title)}A:Z`;
+    const response = await client.spreadsheets.values.get({
+      spreadsheetId,
+      range,
+    });
+    const values = response.data.values ?? [];
+    return parseDalesTeamSellerCodes(values);
   }
 
   async getSellerBreakdownFromSheets(
@@ -2241,6 +2264,30 @@ function parseSellerEmailRows(values: unknown[][]): SellerEmailRow[] {
   }));
 }
 
+function parseSheetBoolCell(raw: unknown): boolean {
+  const s = String(raw ?? "").trim().toLowerCase();
+  return s === "true" || s === "1" || s === "yes";
+}
+
+function parseDalesTeamSellerCodes(values: unknown[][]): Set<string> {
+  const out = new Set<string>();
+  if (values.length === 0) return out;
+  const headerRaw = values[0] ?? [];
+  const header = headerRaw.map((c) => normUsersSheetHeader(c));
+  const userIdIdx = header.findIndex((h) => h === "user_id");
+  const dalesTeamIdx = header.findIndex((h) => h === "dales_team");
+  if (userIdIdx < 0 || dalesTeamIdx < 0) {
+    return out;
+  }
+  for (let i = 1; i < values.length; i++) {
+    const row = values[i] ?? [];
+    if (!parseSheetBoolCell(row[dalesTeamIdx])) continue;
+    const sellerCode = normalizeCashInSellerDigits(String(row[userIdIdx] ?? ""));
+    if (sellerCode !== "") out.add(sellerCode);
+  }
+  return out;
+}
+
 function normTicketRulesHeader(cell: unknown): string {
   return normSheetHeader(
     String(cell ?? "")
@@ -2252,11 +2299,13 @@ function normTicketRulesHeader(cell: unknown): string {
 function parseTicketCommissionMaps(values: unknown[][]): {
   commissionBySlug: Map<string, number>;
   hCommissionBySlug: Map<string, number>;
+  dCommissionBySlug: Map<string, number>;
 } {
   const commissionBySlug = new Map<string, number>();
   const hCommissionBySlug = new Map<string, number>();
+  const dCommissionBySlug = new Map<string, number>();
   if (values.length === 0) {
-    return { commissionBySlug, hCommissionBySlug };
+    return { commissionBySlug, hCommissionBySlug, dCommissionBySlug };
   }
 
   const headerRaw = values[0] ?? [];
@@ -2268,11 +2317,13 @@ function parseTicketCommissionMaps(values: unknown[][]): {
   );
   const commissionIdx = header.findIndex((h) => h === "commission");
   const hCommissionIdx = header.findIndex((h) => h === "h_commission");
+  const dCommissionIdx = header.findIndex((h) => h === "d_commission");
 
-  /** Default: slug | commission | display | deposit | h_commission */
+  /** Default: slug | commission | display | deposit | h_commission | d_commission */
   const idxSlug = slugIdx >= 0 ? slugIdx : 0;
   const idxCommission = commissionIdx >= 0 ? commissionIdx : 1;
   const idxH = hCommissionIdx >= 0 ? hCommissionIdx : 4;
+  const idxD = dCommissionIdx >= 0 ? dCommissionIdx : 5;
 
   const parseMoneyCell = (raw: unknown): number => {
     const n = parseFloat(String(raw ?? "").replace(/,/g, ""));
@@ -2280,7 +2331,7 @@ function parseTicketCommissionMaps(values: unknown[][]): {
   };
 
   /** Override map only when the cell is a finite number (including 0); empty/non-numeric omitted. */
-  const parseHOverrideCell = (raw: unknown): number | undefined => {
+  const parseOverrideCell = (raw: unknown): number | undefined => {
     const s = String(raw ?? "").trim();
     if (s === "") return undefined;
     const n = parseFloat(s.replace(/,/g, ""));
@@ -2295,17 +2346,22 @@ function parseTicketCommissionMaps(values: unknown[][]): {
 
     commissionBySlug.set(slug, parseMoneyCell(row[idxCommission]));
 
-    const hParsed = parseHOverrideCell(row[idxH]);
+    const hParsed = parseOverrideCell(row[idxH]);
     if (hParsed !== undefined) {
       hCommissionBySlug.set(slug, hParsed);
     }
+
+    const dParsed = parseOverrideCell(row[idxD]);
+    if (dParsed !== undefined) {
+      dCommissionBySlug.set(slug, dParsed);
+    }
   }
-  return { commissionBySlug, hCommissionBySlug };
+  return { commissionBySlug, hCommissionBySlug, dCommissionBySlug };
 }
 
 /**
  * Finds columns by normalized header matching:
- * Ticket_type_Slug · Commission · Display Name · Deposit Name · H Commission
+ * Ticket_type_Slug · Commission · Display Name · Deposit Name · H Commission · D Commission
  */
 function parseTicketNamesBySlug(
   values: unknown[][]
