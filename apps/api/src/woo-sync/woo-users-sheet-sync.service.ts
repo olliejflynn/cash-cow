@@ -21,7 +21,7 @@ export class WooUsersSheetSyncService {
   ) {}
 
   /**
-   * Pull WordPress users via REST and replace the Users sheet (WordPress fields only).
+   * Pull WordPress users via REST and upsert the Users sheet (WordPress fields + Dales Team).
    * Square team member lists are still fetched and logged for manual copy into sheets.
    * If WordPress REST env is incomplete, returns without throwing (safe for CI builds).
    */
@@ -30,6 +30,8 @@ export class WooUsersSheetSyncService {
     skipped: boolean;
     reason?: string;
     customersWritten: number;
+    usersInserted: number;
+    usersUpdated: number;
     squareTeamMembersFetched: number;
     mSquareTeamMembersFetched: number;
     rowsWithSquareTeamId: number;
@@ -49,6 +51,8 @@ export class WooUsersSheetSyncService {
         skipped: true,
         reason: "wordpress_rest_env_incomplete",
         customersWritten: 0,
+        usersInserted: 0,
+        usersUpdated: 0,
         squareTeamMembersFetched: 0,
         mSquareTeamMembersFetched: 0,
         rowsWithSquareTeamId: 0,
@@ -97,17 +101,18 @@ export class WooUsersSheetSyncService {
         first_name: first !== "" ? first : (u.name ?? "").trim(),
         last_name: last,
         email,
-        square_team_id: "",
-        m_square_team_id: "",
       };
     });
 
-    await this.sheetsService.replaceUsersSheetRows(rows);
+    const { rowsWritten, inserted, updated } =
+      await this.sheetsService.upsertUsersSheetRows(rows);
 
     return {
       ok: true,
       skipped: false,
-      customersWritten: rows.length,
+      customersWritten: rowsWritten,
+      usersInserted: inserted,
+      usersUpdated: updated,
       squareTeamMembersFetched: squareFetched,
       mSquareTeamMembersFetched: mSquareFetched,
       rowsWithSquareTeamId: 0,

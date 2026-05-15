@@ -977,7 +977,7 @@ export class SheetsService {
 
   /**
    * Read seller code / email from the Users tab (Telegram /balance).
-   * Expected row 1: `user_id`, `first_name`, `last_name`, `email`, … — only `user_id` and `email` are required.
+   * Expected row 1: `user_id`, `first_name`, `last_name`, `email`, `Dales Team` — only `user_id` and `email` are required.
    */
   async getSellerEmailRows(): Promise<SellerEmailRow[]> {
     const client = await this.getSheetsClient();
@@ -1560,19 +1560,18 @@ export class SheetsService {
   }
 
   /**
-   * Replace the Users tab with header row + data. Headers:
-   * user_id, first_name, last_name, email, Square_team_ID, M Square_team_ID
+   * Upsert WordPress users onto the Users tab. Headers:
+   * user_id, first_name, last_name, email, Dales Team
+   * Existing rows keep their Dales Team value; new users default to FALSE.
    */
-  async replaceUsersSheetRows(
+  async upsertUsersSheetRows(
     rows: Array<{
       user_id: string;
       first_name: string;
       last_name: string;
       email: string;
-      square_team_id: string;
-      m_square_team_id: string;
     }>
-  ): Promise<void> {
+  ): Promise<{ rowsWritten: number; inserted: number; updated: number }> {
     const client = await this.getSheetsClient();
     const spreadsheetId = this.spreadsheetId.trim();
     if (spreadsheetId === "") {
@@ -1646,25 +1645,41 @@ export class SheetsService {
     };
     console.log("[UsersSheetSync][Sheets] Resolved tab and ranges", JSON.stringify(sheetDebug));
 
-    const headers = [
-      "user_id",
-      "first_name",
-      "last_name",
-      "email",
-      "Square_team_ID",
-      "M Square_team_ID",
-    ];
-    const dataRows = rows.map((r) => [
-      r.user_id,
-      r.first_name,
-      r.last_name,
-      r.email,
-      r.square_team_id,
-      r.m_square_team_id,
-    ]);
+    const readRes = await client.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${rangePrefix}A:E`,
+    });
+    const existingByUserId = parseUsersSheetRows(readRes.data.values ?? []);
+
+    const merged = new Map<string, UsersSheetUpsertRow>();
+    let inserted = 0;
+    let updated = 0;
+    for (const incoming of rows) {
+      const userId = String(incoming.user_id ?? "").trim();
+      if (userId === "") continue;
+      const key = usersSheetMergeKey(userId);
+      const prev = existingByUserId.get(key);
+      if (prev == null) {
+        inserted += 1;
+      } else {
+        updated += 1;
+      }
+      merged.set(key, {
+        user_id: userId,
+        first_name: incoming.first_name,
+        last_name: incoming.last_name,
+        email: incoming.email,
+        dales_team: prev?.dales_team ?? false,
+      });
+    }
+
+    const headers = USERS_SHEET_HEADERS;
+    const dataRows = [...merged.values()]
+      .sort(compareUsersSheetRows)
+      .map((r) => usersSheetRowToValues(r));
     const values = [headers, ...dataRows];
 
-    const clearRange = `${rangePrefix}A:F`;
+    const clearRange = `${rangePrefix}A:E`;
     await client.spreadsheets.values.clear({
       spreadsheetId,
       range: clearRange,
@@ -1674,7 +1689,7 @@ export class SheetsService {
       JSON.stringify({ range: clearRange })
     );
 
-    const updateRange = `${rangePrefix}A1:F${values.length}`;
+    const updateRange = `${rangePrefix}A1:E${values.length}`;
     const updateRes = await client.spreadsheets.values.update({
       spreadsheetId,
       range: updateRange,
@@ -1688,8 +1703,13 @@ export class SheetsService {
         updated_range: updateRes.data.updatedRange ?? "",
         updated_rows: updateRes.data.updatedRows ?? null,
         updated_columns: updateRes.data.updatedColumns ?? null,
+        inserted,
+        updated,
+        rows_written: dataRows.length,
       })
     );
+
+    return { rowsWritten: dataRows.length, inserted, updated };
   }
 
   /**
@@ -2262,6 +2282,79 @@ function parseSellerEmailRows(values: unknown[][]): SellerEmailRow[] {
     sellerCode,
     email,
   }));
+}
+
+const USERS_SHEET_HEADERS = [
+  "user_id",
+  "first_name",
+  "last_name",
+  "email",
+  "Dales Team",
+];
+
+type UsersSheetUpsertRow = {
+  user_id: string;
+  first_name: string;
+  last_name: string;
+  email: string;
+  dales_team: boolean;
+};
+
+function usersSheetMergeKey(userId: string): string {
+  const digits = normalizeCashInSellerDigits(userId);
+  return digits !== "" ? digits : userId.trim();
+}
+
+function formatSheetBoolCell(value: boolean): string {
+  return value ? "TRUE" : "FALSE";
+}
+
+function usersSheetRowToValues(row: UsersSheetUpsertRow): string[] {
+  return [
+    row.user_id,
+    row.first_name,
+    row.last_name,
+    row.email,
+    formatSheetBoolCell(row.dales_team),
+  ];
+}
+
+function compareUsersSheetRows(a: UsersSheetUpsertRow, b: UsersSheetUpsertRow): number {
+  const na = parseInt(a.user_id, 10);
+  const nb = parseInt(b.user_id, 10);
+  if (Number.isFinite(na) && Number.isFinite(nb) && na !== nb) {
+    return na - nb;
+  }
+  return a.user_id.localeCompare(b.user_id, "en", { numeric: true });
+}
+
+function parseUsersSheetRows(values: unknown[][]): Map<string, UsersSheetUpsertRow> {
+  const byUserId = new Map<string, UsersSheetUpsertRow>();
+  if (values.length === 0) return byUserId;
+  const headerRaw = values[0] ?? [];
+  const header = headerRaw.map((c) => normUsersSheetHeader(c));
+  const userIdIdx = header.findIndex((h) => h === "user_id");
+  const firstIdx = header.findIndex((h) => h === "first_name");
+  const lastIdx = header.findIndex((h) => h === "last_name");
+  const emailIdx = header.findIndex((h) => h === "email");
+  const dalesTeamIdx = header.findIndex((h) => h === "dales_team");
+  if (userIdIdx < 0) return byUserId;
+
+  for (let i = 1; i < values.length; i++) {
+    const row = values[i] ?? [];
+    const user_id = String(row[userIdIdx] ?? "").trim();
+    if (user_id === "") continue;
+    const key = usersSheetMergeKey(user_id);
+    if (byUserId.has(key)) continue;
+    byUserId.set(key, {
+      user_id,
+      first_name: firstIdx >= 0 ? String(row[firstIdx] ?? "").trim() : "",
+      last_name: lastIdx >= 0 ? String(row[lastIdx] ?? "").trim() : "",
+      email: emailIdx >= 0 ? String(row[emailIdx] ?? "").trim() : "",
+      dales_team: dalesTeamIdx >= 0 ? parseSheetBoolCell(row[dalesTeamIdx]) : false,
+    });
+  }
+  return byUserId;
 }
 
 function parseSheetBoolCell(raw: unknown): boolean {
